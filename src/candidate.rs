@@ -102,6 +102,8 @@ pub struct Candidate {
     pub types: TypeFlags,
     /// How many filter passes have confirmed this candidate.
     pub confidence: u8,
+    /// Raw bytes from the last scan/filter pass (for comparison-based filters).
+    pub last_value: [u8; 8],
 }
 
 impl Candidate {
@@ -111,6 +113,18 @@ impl Candidate {
             address,
             types,
             confidence: 0,
+            last_value: [0; 8],
+        }
+    }
+
+    /// Create a candidate with initial value bytes.
+    #[must_use]
+    pub const fn with_value(address: u64, types: TypeFlags, last_value: [u8; 8]) -> Self {
+        Self {
+            address,
+            types,
+            confidence: 0,
+            last_value,
         }
     }
 }

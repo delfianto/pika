@@ -1,12 +1,17 @@
 use clap::{Parser, Subcommand};
 
+/// Default Unix socket path for the pika daemon.
+pub const DEFAULT_SOCKET: &str = "/tmp/pika.sock";
+
 #[derive(Parser, Debug)]
 #[command(
     name = "pika",
     about = "Non-stopping memory scanner for Wine/Proton games",
     version,
     long_about = "Pika scans and patches game memory without using ptrace SIGSTOP.\n\
-                   Safe for Wine/Proton games with DXVK/VKD3D GPU translation layers."
+                   Safe for Wine/Proton games with DXVK/VKD3D GPU translation layers.\n\n\
+                   Stateful commands (scan, filter, freeze) require a running daemon.\n\
+                   Start one with: pika serve &"
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -15,22 +20,26 @@ pub struct Cli {
     /// Enable verbose logging
     #[arg(short, long, global = true)]
     pub verbose: bool,
+
+    /// Path to the daemon Unix socket
+    #[arg(short, long, global = true, default_value = DEFAULT_SOCKET)]
+    pub socket: String,
+
+    /// Output as JSON (machine-readable)
+    #[arg(long, global = true)]
+    pub json: bool,
 }
 
 #[derive(Subcommand, Debug)]
 pub enum Command {
-    /// Start the JSON-RPC server (Unix socket or stdio)
+    /// Start the JSON-RPC server daemon
     Serve {
-        /// Unix socket path (default: /tmp/pika.sock)
-        #[arg(short, long, default_value = "/tmp/pika.sock")]
-        socket: String,
-
         /// Use stdin/stdout instead of Unix socket
         #[arg(long)]
         stdio: bool,
     },
 
-    /// Start the interactive TUI
+    /// Start the interactive TUI (not yet implemented)
     Tui,
 
     /// List Wine/Proton game processes
@@ -42,7 +51,7 @@ pub enum Command {
         pid: u32,
     },
 
-    /// Scan process memory for a value
+    /// Scan process memory for a value (requires daemon)
     Scan {
         /// Process ID
         pid: u32,
@@ -53,6 +62,28 @@ pub enum Command {
         /// Data type: i32, u32, f32, i64, u64, f64, auto
         #[arg(short, long, default_value = "auto")]
         dtype: String,
+    },
+
+    /// Filter candidates from a previous scan (requires daemon)
+    Filter {
+        /// Session ID from a previous scan
+        session_id: String,
+
+        /// New value to filter by
+        new_value: f64,
+
+        /// Filter mode: exact, not-equal, increased, decreased, changed, unchanged
+        #[arg(short, long, default_value = "exact")]
+        mode: String,
+    },
+
+    /// List active scan sessions (requires daemon)
+    Sessions,
+
+    /// Discard a scan session (requires daemon)
+    Discard {
+        /// Session ID to discard
+        session_id: String,
     },
 
     /// Read memory at an address
@@ -68,7 +99,7 @@ pub enum Command {
         length: usize,
     },
 
-    /// Write a value to an address
+    /// Write a value to an address (requires daemon)
     Write {
         /// Process ID
         pid: u32,
@@ -82,5 +113,77 @@ pub enum Command {
         /// Data type: i32, u32, f32, i64, u64, f64
         #[arg(short, long)]
         dtype: String,
+    },
+
+    /// Freeze a value at an address (requires daemon)
+    Freeze {
+        /// Process ID
+        pid: u32,
+
+        /// Hex address
+        address: String,
+
+        /// Value to freeze
+        value: f64,
+
+        /// Data type: i32, u32, f32, i64, u64, f64
+        #[arg(short, long)]
+        dtype: String,
+
+        /// Write interval in milliseconds
+        #[arg(short, long, default_value = "100")]
+        interval: u64,
+    },
+
+    /// Unfreeze a previously frozen address (requires daemon)
+    Unfreeze {
+        /// Hex address to unfreeze
+        address: String,
+    },
+
+    /// List all active freezes (requires daemon)
+    FreezeList,
+
+    /// Disassemble instructions at an address (Linux only)
+    Disasm {
+        /// Process ID
+        pid: u32,
+
+        /// Hex address
+        address: String,
+
+        /// Number of instructions
+        #[arg(short = 'n', long, default_value = "20")]
+        count: usize,
+    },
+
+    /// Scan for a byte pattern with wildcards (requires daemon)
+    Aob {
+        /// Process ID
+        pid: u32,
+
+        /// Byte pattern (e.g., "48 89 5C 24 ?? 57")
+        pattern: String,
+
+        /// Include read-only (code) regions
+        #[arg(long)]
+        include_readonly: bool,
+    },
+
+    /// Scan for pointer chains to an address (requires daemon)
+    PointerScan {
+        /// Process ID
+        pid: u32,
+
+        /// Target hex address
+        address: String,
+
+        /// Maximum chain depth
+        #[arg(long, default_value = "5")]
+        max_depth: usize,
+
+        /// Maximum struct offset
+        #[arg(long, default_value = "4096")]
+        max_offset: i64,
     },
 }

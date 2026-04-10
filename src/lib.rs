@@ -1,5 +1,6 @@
 pub mod candidate;
 pub mod cli;
+pub mod disassemble;
 pub mod filter;
 pub mod freeze;
 pub mod maps;

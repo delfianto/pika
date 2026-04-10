@@ -19,6 +19,16 @@ pub struct ScanSession {
     pub dtype: ValueType,
 }
 
+/// Summary info for a scan session (for listing).
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct SessionSummary {
+    pub id: String,
+    pub pid: u32,
+    pub candidates: usize,
+    pub value: f64,
+    pub dtype: ValueType,
+}
+
 /// Global registry of active scan sessions.
 pub struct SessionRegistry {
     sessions: Mutex<HashMap<String, ScanSession>>,
@@ -57,6 +67,22 @@ impl SessionRegistry {
         F: FnOnce(&mut ScanSession) -> R,
     {
         self.sessions.lock().unwrap().get_mut(session_id).map(f)
+    }
+
+    /// List all active sessions with summary info.
+    pub fn list(&self) -> Vec<SessionSummary> {
+        self.sessions
+            .lock()
+            .unwrap()
+            .values()
+            .map(|s| SessionSummary {
+                id: s.id.clone(),
+                pid: s.pid,
+                candidates: s.candidates.len(),
+                value: s.value,
+                dtype: s.dtype,
+            })
+            .collect()
     }
 }
 
@@ -149,7 +175,16 @@ fn scan_region(
         for &(ref pattern, flags, pat_size) in patterns {
             let hits = scan_buffer_for_pattern(&buffer[..bytes_read], &pattern[..pat_size], pat_size);
             for buf_offset in hits {
-                candidates.push(Candidate::new(address + buf_offset as u64, flags));
+                // Copy up to 8 bytes at the match position for last_value snapshot
+                let mut last_value = [0u8; 8];
+                let copy_len = 8.min(bytes_read - buf_offset);
+                last_value[..copy_len]
+                    .copy_from_slice(&buffer[buf_offset..buf_offset + copy_len]);
+                candidates.push(Candidate::with_value(
+                    address + buf_offset as u64,
+                    flags,
+                    last_value,
+                ));
             }
         }
 
@@ -380,6 +415,157 @@ unsafe fn scan_4byte_sse2(buffer: &[u8], needle: u32, alignment: usize) -> Vec<u
     results
 }
 
+// ─── AOB / Signature scanning ────────────────────────────────────────────────
+
+/// Parse an AOB pattern string like "48 89 5C 24 ?? 57" into a byte pattern.
+/// `??` or `*` are wildcards (match any byte).
+pub fn parse_aob_pattern(pattern: &str) -> Result<Vec<Option<u8>>> {
+    pattern
+        .split_whitespace()
+        .map(|token| {
+            if token == "??" || token == "?" || token == "*" {
+                Ok(None)
+            } else {
+                u8::from_str_radix(token, 16)
+                    .map(Some)
+                    .map_err(|_| anyhow::anyhow!("invalid hex byte in AOB pattern: '{token}'"))
+            }
+        })
+        .collect()
+}
+
+/// Scan process memory for an AOB (array of bytes) pattern with optional wildcards.
+/// Returns matching addresses.
+pub fn aob_scan(
+    mem: &dyn MemoryAccess,
+    pid: u32,
+    pattern: &[Option<u8>],
+    include_readonly: bool,
+) -> Result<Vec<u64>> {
+    if pattern.is_empty() {
+        anyhow::bail!("AOB pattern is empty");
+    }
+
+    let regions = mem.read_maps(pid)?;
+    let scan_regions: Vec<&MapRegion> = regions
+        .iter()
+        .filter(|r| {
+            r.permissions.read
+                && match r.safety {
+                    RegionSafety::Safe => true,
+                    RegionSafety::ReadOnly => include_readonly,
+                    _ => false,
+                }
+        })
+        .collect();
+
+    // Find the first non-wildcard byte for memchr anchoring
+    let anchor = pattern
+        .iter()
+        .enumerate()
+        .find(|(_, b)| b.is_some());
+
+    let results: Vec<u64> = scan_regions
+        .par_iter()
+        .flat_map(|region| aob_scan_region(mem, pid, region, pattern, anchor).unwrap_or_default())
+        .collect();
+
+    Ok(results)
+}
+
+/// Scan a single region for an AOB pattern.
+fn aob_scan_region(
+    mem: &dyn MemoryAccess,
+    pid: u32,
+    region: &MapRegion,
+    pattern: &[Option<u8>],
+    anchor: Option<(usize, &Option<u8>)>,
+) -> Result<Vec<u64>> {
+    let size = region.size() as usize;
+    let pat_len = pattern.len();
+    if size < pat_len {
+        return Ok(Vec::new());
+    }
+
+    let chunk_size = if size <= DEFAULT_CHUNK_SIZE {
+        size
+    } else {
+        DEFAULT_CHUNK_SIZE
+    };
+
+    let mut results = Vec::new();
+    let mut buffer = vec![0u8; chunk_size];
+    let mut offset = 0usize;
+
+    while offset < size {
+        let read_len = chunk_size.min(size - offset);
+        let address = region.start + offset as u64;
+
+        let Ok(bytes_read) = mem.read(pid, address, &mut buffer[..read_len]) else {
+            break;
+        };
+        if bytes_read < pat_len {
+            break;
+        }
+
+        // Use anchor byte with memchr for fast skipping, or linear scan if all wildcards
+        let buf = &buffer[..bytes_read];
+        match anchor {
+            Some((anchor_offset, Some(anchor_byte))) => {
+                let mut pos = 0;
+                while pos + pat_len <= buf.len() {
+                    // Find next occurrence of the anchor byte
+                    let search_start = pos + anchor_offset;
+                    if search_start >= buf.len() {
+                        break;
+                    }
+                    match memchr::memchr(*anchor_byte, &buf[search_start..]) {
+                        Some(found) => {
+                            let candidate_start = search_start + found - anchor_offset;
+                            if candidate_start + pat_len <= buf.len()
+                                && aob_matches(&buf[candidate_start..candidate_start + pat_len], pattern)
+                            {
+                                results.push(address + candidate_start as u64);
+                            }
+                            pos = candidate_start + 1;
+                        }
+                        None => break,
+                    }
+                }
+            }
+            _ => {
+                // No anchor (all wildcards) -- linear scan
+                for pos in 0..=buf.len() - pat_len {
+                    if aob_matches(&buf[pos..pos + pat_len], pattern) {
+                        results.push(address + pos as u64);
+                    }
+                }
+            }
+        }
+
+        // Overlap: re-read the last (pat_len - 1) bytes to catch matches spanning chunks
+        if bytes_read == read_len && offset + bytes_read < size {
+            offset += bytes_read - (pat_len - 1);
+        } else {
+            offset += bytes_read;
+        }
+    }
+
+    Ok(results)
+}
+
+/// Check if a byte slice matches an AOB pattern (with wildcards).
+fn aob_matches(data: &[u8], pattern: &[Option<u8>]) -> bool {
+    data.len() == pattern.len()
+        && data
+            .iter()
+            .zip(pattern.iter())
+            .all(|(d, p)| match p {
+                Some(expected) => *d == *expected,
+                None => true, // wildcard
+            })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -602,5 +788,131 @@ mod tests {
         let removed = registry.remove("test-123");
         assert!(removed.is_some());
         assert_eq!(registry.get_candidate_count("test-123"), None);
+    }
+
+    // ─── AOB tests ──────────────────────────────────────────────────────
+
+    #[test]
+    fn parse_aob_basic() {
+        let pat = parse_aob_pattern("48 89 5C 24 08").unwrap();
+        assert_eq!(pat, vec![Some(0x48), Some(0x89), Some(0x5C), Some(0x24), Some(0x08)]);
+    }
+
+    #[test]
+    fn parse_aob_with_wildcards() {
+        let pat = parse_aob_pattern("48 ?? 5C ?? 08").unwrap();
+        assert_eq!(pat, vec![Some(0x48), None, Some(0x5C), None, Some(0x08)]);
+    }
+
+    #[test]
+    fn parse_aob_star_wildcard() {
+        let pat = parse_aob_pattern("48 * 5C").unwrap();
+        assert_eq!(pat, vec![Some(0x48), None, Some(0x5C)]);
+    }
+
+    #[test]
+    fn parse_aob_invalid_hex() {
+        let result = parse_aob_pattern("48 ZZ 5C");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn aob_matches_exact() {
+        assert!(aob_matches(&[0x48, 0x89, 0x5C], &[Some(0x48), Some(0x89), Some(0x5C)]));
+    }
+
+    #[test]
+    fn aob_matches_wildcards() {
+        assert!(aob_matches(&[0x48, 0xFF, 0x5C], &[Some(0x48), None, Some(0x5C)]));
+    }
+
+    #[test]
+    fn aob_no_match() {
+        assert!(!aob_matches(&[0x48, 0x89, 0x00], &[Some(0x48), Some(0x89), Some(0x5C)]));
+    }
+
+    #[test]
+    fn aob_scan_finds_pattern_in_mock() {
+        let mock = MockMemoryAccess::new(1);
+        let mut data = vec![0u8; 4096];
+        // Plant pattern at offset 100: 48 89 5C 24 08
+        data[100] = 0x48;
+        data[101] = 0x89;
+        data[102] = 0x5C;
+        data[103] = 0x24;
+        data[104] = 0x08;
+        // Plant another at offset 500
+        data[500] = 0x48;
+        data[501] = 0x89;
+        data[502] = 0x5C;
+        data[503] = 0x24;
+        data[504] = 0x08;
+        mock.add_region(0x14000_0000, data);
+        mock.set_maps(vec![MapRegion {
+            start: 0x14000_0000,
+            end: 0x14000_1000,
+            permissions: Permissions {
+                read: true,
+                write: true,
+                execute: false,
+                shared: false,
+            },
+            offset: 0,
+            device: "00:00".to_string(),
+            inode: 0,
+            pathname: String::new(),
+            safety: RegionSafety::Safe,
+        }]);
+
+        let pattern = parse_aob_pattern("48 89 5C 24 08").unwrap();
+        let results = aob_scan(&mock, 1, &pattern, false).unwrap();
+        assert_eq!(results.len(), 2);
+        assert!(results.contains(&(0x14000_0000 + 100)));
+        assert!(results.contains(&(0x14000_0000 + 500)));
+    }
+
+    #[test]
+    fn aob_scan_with_wildcards() {
+        let mock = MockMemoryAccess::new(1);
+        let mut data = vec![0u8; 256];
+        data[10] = 0x48;
+        data[11] = 0xAA; // wildcard position
+        data[12] = 0x5C;
+        data[20] = 0x48;
+        data[21] = 0xBB; // different byte at wildcard
+        data[22] = 0x5C;
+        mock.add_region(0x1000, data);
+        mock.set_maps(vec![MapRegion {
+            start: 0x1000,
+            end: 0x1100,
+            permissions: Permissions { read: true, write: true, execute: false, shared: false },
+            offset: 0, device: "00:00".to_string(), inode: 0, pathname: String::new(),
+            safety: RegionSafety::Safe,
+        }]);
+
+        let pattern = parse_aob_pattern("48 ?? 5C").unwrap();
+        let results = aob_scan(&mock, 1, &pattern, false).unwrap();
+        assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    fn aob_scan_respects_safety() {
+        let mock = MockMemoryAccess::new(1);
+        let mut data = vec![0u8; 256];
+        data[0] = 0xAA;
+        data[1] = 0xBB;
+        mock.add_region(0x1000, data);
+        mock.set_maps(vec![MapRegion {
+            start: 0x1000,
+            end: 0x1100,
+            permissions: Permissions { read: true, write: true, execute: false, shared: true },
+            offset: 0, device: "00:06".to_string(), inode: 1111,
+            pathname: "/dev/nvidia0".to_string(),
+            safety: RegionSafety::NeverTouch,
+        }]);
+
+        let pattern = parse_aob_pattern("AA BB").unwrap();
+        let results = aob_scan(&mock, 1, &pattern, false).unwrap();
+        assert!(results.is_empty(), "should not scan NeverTouch regions");
     }
 }

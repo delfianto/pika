@@ -38,11 +38,17 @@ pub fn dispatch(state: &RpcState, req: &JsonRpcRequest) -> JsonRpcResponse {
     let result = match req.method.as_str() {
         "pid.list" => handle_pid_list(),
         "pid.find" => handle_pid_find(&req.params),
+        "maps.get" => handle_maps_get(state, &req.params),
         "scan.start" => handle_scan_start(state, &req.params),
         "scan.filter" => handle_scan_filter(state, &req.params),
         "scan.discard" => handle_scan_discard(state, &req.params),
+        "scan.list" => handle_scan_list(state),
+        "scan.candidates" => handle_scan_candidates(state, &req.params),
+        "scan.aob" => handle_scan_aob(state, &req.params),
         "memory.read" => handle_memory_read(state, &req.params),
         "memory.write" => handle_memory_write(state, &req.params),
+        "memory.disassemble" => handle_memory_disassemble(state, &req.params),
+        "pointer.scan" => handle_pointer_scan(state, &req.params),
         "freeze.start" => handle_freeze_start(state, &req.params),
         "freeze.stop" => handle_freeze_stop(state, &req.params),
         "freeze.list" => handle_freeze_list(state),
@@ -66,6 +72,35 @@ fn handle_pid_list() -> MethodResult {
         JsonRpcResponse::err(None, INTERNAL_ERROR, e.to_string())
     })?;
     Ok(json!(processes))
+}
+
+fn handle_maps_get(state: &RpcState, params: &serde_json::Value) -> MethodResult {
+    let pid = params
+        .get("pid")
+        .and_then(|v| v.as_u64())
+        .map(|v| v as u32)
+        .ok_or_else(|| JsonRpcResponse::err(None, INVALID_PARAMS, "missing 'pid' parameter"))?;
+
+    let regions = state.mem.read_maps(pid).map_err(|e| {
+        JsonRpcResponse::err(None, INTERNAL_ERROR, e.to_string())
+    })?;
+
+    // Serialize with human-friendly fields
+    let result: Vec<serde_json::Value> = regions
+        .iter()
+        .map(|r| {
+            json!({
+                "start": r.start,
+                "end": r.end,
+                "size": r.size(),
+                "permissions": r.permissions.as_str(),
+                "safety": format!("{:?}", r.safety),
+                "pathname": r.pathname,
+            })
+        })
+        .collect();
+
+    Ok(json!(result))
 }
 
 fn handle_pid_find(params: &serde_json::Value) -> MethodResult {
@@ -119,11 +154,19 @@ fn handle_scan_filter(state: &RpcState, params: &serde_json::Value) -> MethodRes
     let new_value = params
         .get("new_value")
         .and_then(|v| v.as_f64())
-        .ok_or_else(|| JsonRpcResponse::err(None, INVALID_PARAMS, "missing 'new_value'"))?;
+        .unwrap_or(0.0);
+
+    let mode_str = params
+        .get("mode")
+        .and_then(|v| v.as_str())
+        .unwrap_or("exact");
+    let mode = crate::filter::FilterMode::from_str_loose(mode_str).map_err(|e| {
+        JsonRpcResponse::err(None, INVALID_PARAMS, e.to_string())
+    })?;
 
     let result = state.sessions.with_session(session_id, |session| {
         let retained =
-            filter_candidates(state.mem.as_ref(), session.pid, &mut session.candidates, new_value, session.dtype)
+            filter_candidates(state.mem.as_ref(), session.pid, &mut session.candidates, new_value, session.dtype, mode)
                 .map_err(|e| JsonRpcResponse::err(None, INTERNAL_ERROR, e.to_string()))?;
 
         let top_candidates: Vec<CandidateJson> =
@@ -138,6 +181,69 @@ fn handle_scan_filter(state: &RpcState, params: &serde_json::Value) -> MethodRes
 
     match result {
         Some(inner) => inner,
+        None => Err(JsonRpcResponse::err(
+            None,
+            INVALID_PARAMS,
+            format!("session '{session_id}' not found"),
+        )),
+    }
+}
+
+fn handle_scan_aob(state: &RpcState, params: &serde_json::Value) -> MethodResult {
+    let pid = params.get("pid").and_then(|v| v.as_u64()).map(|v| v as u32)
+        .ok_or_else(|| JsonRpcResponse::err(None, INVALID_PARAMS, "missing 'pid'"))?;
+
+    let pattern_str = params.get("pattern").and_then(|v| v.as_str())
+        .ok_or_else(|| JsonRpcResponse::err(None, INVALID_PARAMS, "missing 'pattern'"))?;
+
+    let include_readonly = params.get("include_readonly").and_then(|v| v.as_bool()).unwrap_or(false);
+
+    let pattern = crate::scan::parse_aob_pattern(pattern_str)
+        .map_err(|e| JsonRpcResponse::err(None, INVALID_PARAMS, e.to_string()))?;
+
+    let addresses = crate::scan::aob_scan(state.mem.as_ref(), pid, &pattern, include_readonly)
+        .map_err(|e| JsonRpcResponse::err(None, INTERNAL_ERROR, e.to_string()))?;
+
+    let addr_strings: Vec<String> = addresses.iter().map(|a| format!("{a:#x}")).collect();
+
+    Ok(json!({
+        "count": addresses.len(),
+        "addresses": addr_strings,
+    }))
+}
+
+fn handle_scan_list(state: &RpcState) -> MethodResult {
+    Ok(json!(state.sessions.list()))
+}
+
+fn handle_scan_candidates(state: &RpcState, params: &serde_json::Value) -> MethodResult {
+    let session_id = params
+        .get("session_id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| JsonRpcResponse::err(None, INVALID_PARAMS, "missing 'session_id'"))?;
+
+    let offset = params.get("offset").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+    let limit = params.get("limit").and_then(|v| v.as_u64()).unwrap_or(100) as usize;
+    let limit = limit.min(1000); // Cap per-request
+
+    let result = state.sessions.with_session(session_id, |session| {
+        let total = session.candidates.len();
+        let end = total.min(offset + limit);
+        let page: Vec<CandidateJson> = session.candidates[offset.min(total)..end]
+            .iter()
+            .map(|c| c.into())
+            .collect();
+        json!({
+            "session_id": session.id,
+            "total": total,
+            "offset": offset,
+            "count": page.len(),
+            "candidates": page,
+        })
+    });
+
+    match result {
+        Some(val) => Ok(val),
         None => Err(JsonRpcResponse::err(
             None,
             INVALID_PARAMS,
@@ -221,6 +327,53 @@ fn handle_memory_write(state: &RpcState, params: &serde_json::Value) -> MethodRe
     })?;
 
     Ok(json!({ "ok": true }))
+}
+
+fn handle_memory_disassemble(state: &RpcState, params: &serde_json::Value) -> MethodResult {
+    let pid = params.get("pid").and_then(|v| v.as_u64()).map(|v| v as u32)
+        .ok_or_else(|| JsonRpcResponse::err(None, INVALID_PARAMS, "missing 'pid'"))?;
+
+    let address = parse_hex_address(params.get("address"))
+        .ok_or_else(|| JsonRpcResponse::err(None, INVALID_PARAMS, "missing or invalid 'address'"))?;
+
+    let num_instructions = params
+        .get("num_instructions")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(20) as usize;
+
+    let instructions =
+        crate::disassemble::disassemble_at(state.mem.as_ref(), pid, address, num_instructions)
+            .map_err(|e| JsonRpcResponse::err(None, INTERNAL_ERROR, e.to_string()))?;
+
+    Ok(json!(instructions))
+}
+
+fn handle_pointer_scan(state: &RpcState, params: &serde_json::Value) -> MethodResult {
+    let pid = params.get("pid").and_then(|v| v.as_u64()).map(|v| v as u32)
+        .ok_or_else(|| JsonRpcResponse::err(None, INVALID_PARAMS, "missing 'pid'"))?;
+
+    let target = parse_hex_address(params.get("target"))
+        .ok_or_else(|| JsonRpcResponse::err(None, INVALID_PARAMS, "missing or invalid 'target'"))?;
+
+    let max_depth = params.get("max_depth").and_then(|v| v.as_u64()).unwrap_or(5) as usize;
+    let max_offset = params.get("max_offset").and_then(|v| v.as_i64()).unwrap_or(0x1000);
+
+    let regions = state.mem.read_maps(pid).map_err(|e| {
+        JsonRpcResponse::err(None, INTERNAL_ERROR, e.to_string())
+    })?;
+
+    let scan_params = crate::pointer::PointerScanParams {
+        max_offset,
+        max_depth,
+        max_results: 100,
+    };
+
+    let chains = crate::pointer::find_pointer_chains(
+        state.mem.as_ref(), pid, target, &regions, &scan_params,
+    )
+    .map_err(|e| JsonRpcResponse::err(None, INTERNAL_ERROR, e.to_string()))?;
+
+    Ok(json!(chains))
 }
 
 fn handle_freeze_start(state: &RpcState, params: &serde_json::Value) -> MethodResult {

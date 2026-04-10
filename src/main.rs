@@ -1,11 +1,8 @@
 use anyhow::Result;
 use clap::Parser;
 use pika::cli::{Cli, Command};
-use pika::memory::MockMemoryAccess;
-use std::sync::Arc;
-
-#[cfg(target_os = "linux")]
-use pika::memory::linux::LinuxMemoryAccess;
+use pika::rpc::client::RpcClient;
+use serde_json::json;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -20,13 +17,17 @@ async fn main() -> Result<()> {
         )
         .init();
 
+    let client = RpcClient::new(&cli.socket);
+    let output_json = cli.json;
+
     match cli.command {
-        Command::Serve { socket, stdio } => {
+        // ── Server / TUI (non-client commands) ──────────────────────────
+        Command::Serve { stdio } => {
             let mem = create_memory_access();
             if stdio {
                 pika::rpc::server::serve_stdio(mem).await?;
             } else {
-                pika::rpc::server::serve_unix_socket(&socket, mem).await?;
+                pika::rpc::server::serve_unix_socket(&cli.socket, mem).await?;
             }
         }
 
@@ -35,9 +36,12 @@ async fn main() -> Result<()> {
             pika::tui::run(mem)?;
         }
 
+        // ── Local-only commands (no daemon needed) ──────────────────────
         Command::Ps => {
             let processes = pika::pid::list_wine_processes()?;
-            if processes.is_empty() {
+            if output_json {
+                println!("{}", serde_json::to_string_pretty(&processes)?);
+            } else if processes.is_empty() {
                 println!("No Wine/Proton game processes found.");
             } else {
                 println!("{:<8} NAME", "PID");
@@ -47,36 +51,107 @@ async fn main() -> Result<()> {
             }
         }
 
+        // ── Daemon-routed commands ──────────────────────────────────────
         Command::Maps { pid } => {
-            let mem = create_memory_access();
-            let regions = mem.read_maps(pid)?;
-            println!(
-                "{:<20} {:<20} {:<6} {:<12} PATH",
-                "START", "END", "PERMS", "SAFETY"
-            );
-            for r in &regions {
+            let result = client.call("maps.get", json!({"pid": pid})).await?;
+            if output_json {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                let regions = result.as_array().unwrap_or(&Vec::new()).clone();
                 println!(
-                    "{:<20} {:<20} {:<6} {:<12} {}",
-                    format!("{:#x}", r.start),
-                    format!("{:#x}", r.end),
-                    r.permissions.as_str(),
-                    format!("{:?}", r.safety),
-                    r.pathname,
+                    "{:<20} {:<20} {:<6} {:<12} PATH",
+                    "START", "END", "PERMS", "SAFETY"
                 );
+                for r in &regions {
+                    println!(
+                        "{:<20} {:<20} {:<6} {:<12} {}",
+                        format!("{:#x}", r["start"].as_u64().unwrap_or(0)),
+                        format!("{:#x}", r["end"].as_u64().unwrap_or(0)),
+                        r["permissions"].as_str().unwrap_or(""),
+                        r["safety"].as_str().unwrap_or(""),
+                        r["pathname"].as_str().unwrap_or(""),
+                    );
+                }
             }
         }
 
         Command::Scan { pid, value, dtype } => {
-            let mem = create_memory_access();
-            let dtype = parse_dtype(&dtype)?;
-            let session = pika::scan::first_scan(mem.as_ref(), pid, value, dtype)?;
-            println!("Session: {}", session.id);
-            println!("Candidates: {}", session.candidates.len());
-            for (i, c) in session.candidates.iter().take(20).enumerate() {
-                println!("  [{i}] {:#x}  types={}", c.address, c.types);
+            let result = client
+                .call("scan.start", json!({"pid": pid, "value": value, "dtype": dtype}))
+                .await?;
+            if output_json {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("Session: {}", result["session_id"].as_str().unwrap_or("?"));
+                println!("Candidates: {}", result["candidates"]);
             }
-            if session.candidates.len() > 20 {
-                println!("  ... and {} more", session.candidates.len() - 20);
+        }
+
+        Command::Filter {
+            session_id,
+            new_value,
+            mode,
+        } => {
+            let result = client
+                .call(
+                    "scan.filter",
+                    json!({"session_id": session_id, "new_value": new_value, "mode": mode}),
+                )
+                .await?;
+            if output_json {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("Candidates remaining: {}", result["candidates"]);
+                if let Some(top) = result["top"].as_array() {
+                    for (i, c) in top.iter().take(20).enumerate() {
+                        println!(
+                            "  [{i}] {}  types={:?}  confidence={}",
+                            c["address"].as_str().unwrap_or("?"),
+                            c["types"],
+                            c["confidence"]
+                        );
+                    }
+                    if top.len() > 20 {
+                        println!("  ... and {} more", top.len() - 20);
+                    }
+                }
+            }
+        }
+
+        Command::Sessions => {
+            let result = client.call("scan.list", json!({})).await?;
+            if output_json {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                let sessions = result.as_array().unwrap_or(&Vec::new()).clone();
+                if sessions.is_empty() {
+                    println!("No active scan sessions.");
+                } else {
+                    println!("{:<38} {:<8} {:<12} {:<8} DTYPE", "SESSION", "PID", "CANDIDATES", "VALUE");
+                    for s in &sessions {
+                        println!(
+                            "{:<38} {:<8} {:<12} {:<8} {}",
+                            s["id"].as_str().unwrap_or("?"),
+                            s["pid"],
+                            s["candidates"],
+                            s["value"],
+                            s["dtype"].as_str().unwrap_or("?"),
+                        );
+                    }
+                }
+            }
+        }
+
+        Command::Discard { session_id } => {
+            let result = client
+                .call("scan.discard", json!({"session_id": session_id}))
+                .await?;
+            if output_json {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else if result["discarded"].as_bool().unwrap_or(false) {
+                println!("Session {session_id} discarded.");
+            } else {
+                println!("Session {session_id} not found.");
             }
         }
 
@@ -85,13 +160,37 @@ async fn main() -> Result<()> {
             address,
             length,
         } => {
-            let mem = create_memory_access();
-            let addr = parse_hex(&address)?;
-            let length = length.min(4096);
-            let mut buf = vec![0u8; length];
-            let n = mem.read(pid, addr, &mut buf)?;
-            buf.truncate(n);
-            print_hex_dump(addr, &buf);
+            let result = client
+                .call(
+                    "memory.read",
+                    json!({"pid": pid, "address": address, "length": length}),
+                )
+                .await?;
+            if output_json {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                let hex = result["hex"].as_str().unwrap_or("");
+                let addr = u64::from_str_radix(
+                    result["address"]
+                        .as_str()
+                        .unwrap_or("0")
+                        .trim_start_matches("0x"),
+                    16,
+                )
+                .unwrap_or(0);
+                let bytes: Vec<u8> = (0..hex.len())
+                    .step_by(2)
+                    .filter_map(|i| u8::from_str_radix(&hex[i..i + 2], 16).ok())
+                    .collect();
+                print_hex_dump(addr, &bytes);
+
+                if let Some(interp) = result.get("interpretations") {
+                    println!();
+                    for (k, v) in interp.as_object().unwrap_or(&serde_json::Map::new()) {
+                        println!("  {k}: {v}");
+                    }
+                }
+            }
         }
 
         Command::Write {
@@ -100,71 +199,200 @@ async fn main() -> Result<()> {
             value,
             dtype,
         } => {
-            let mem = create_memory_access();
-            let addr = parse_hex(&address)?;
-            let dtype = parse_dtype(&dtype)?;
-            pika::write::write_value(mem.as_ref(), pid, addr, value, dtype)?;
-            println!("Wrote {value} ({dtype}) to {address}");
+            let result = client
+                .call(
+                    "memory.write",
+                    json!({"pid": pid, "address": address, "value": value, "dtype": dtype}),
+                )
+                .await?;
+            if output_json {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("Wrote {value} ({dtype}) to {address}");
+            }
+        }
+
+        Command::Freeze {
+            pid,
+            address,
+            value,
+            dtype,
+            interval,
+        } => {
+            let result = client
+                .call(
+                    "freeze.start",
+                    json!({
+                        "pid": pid,
+                        "address": address,
+                        "value": value,
+                        "dtype": dtype,
+                        "interval_ms": interval,
+                    }),
+                )
+                .await?;
+            if output_json {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("Frozen: {address} = {value} ({dtype}), interval={interval}ms");
+            }
+        }
+
+        Command::Unfreeze { address } => {
+            let result = client
+                .call("freeze.stop", json!({"address": address}))
+                .await?;
+            if output_json {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("Unfrozen: {address}");
+            }
+        }
+
+        Command::FreezeList => {
+            let result = client.call("freeze.list", json!({})).await?;
+            if output_json {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                let freezes = result.as_array().unwrap_or(&Vec::new()).clone();
+                if freezes.is_empty() {
+                    println!("No active freezes.");
+                } else {
+                    println!("{:<20} {:<12} {:<8} INTERVAL", "ADDRESS", "VALUE", "DTYPE");
+                    for f in &freezes {
+                        println!(
+                            "{:<20} {:<12} {:<8} {}ms",
+                            f["address"].as_str().unwrap_or("?"),
+                            f["value"],
+                            f["dtype"].as_str().unwrap_or("?"),
+                            f["interval_ms"],
+                        );
+                    }
+                }
+            }
+        }
+
+        Command::Disasm {
+            pid,
+            address,
+            count,
+        } => {
+            let result = client
+                .call(
+                    "memory.disassemble",
+                    json!({"pid": pid, "address": address, "num_instructions": count}),
+                )
+                .await?;
+            if output_json {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else if let Some(insns) = result.as_array() {
+                for insn in insns {
+                    println!(
+                        "  {}: {} {}",
+                        insn["address"].as_str().unwrap_or("?"),
+                        insn["mnemonic"].as_str().unwrap_or("?"),
+                        insn["op_str"].as_str().unwrap_or(""),
+                    );
+                }
+            }
+        }
+
+        Command::Aob {
+            pid,
+            pattern,
+            include_readonly,
+        } => {
+            let result = client
+                .call(
+                    "scan.aob",
+                    json!({"pid": pid, "pattern": pattern, "include_readonly": include_readonly}),
+                )
+                .await?;
+            if output_json {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else if let Some(addrs) = result["addresses"].as_array() {
+                println!("Found {} matches:", addrs.len());
+                for addr in addrs {
+                    println!("  {}", addr.as_str().unwrap_or("?"));
+                }
+            }
+        }
+
+        Command::PointerScan {
+            pid,
+            address,
+            max_depth,
+            max_offset,
+        } => {
+            let result = client
+                .call(
+                    "pointer.scan",
+                    json!({
+                        "pid": pid,
+                        "target": address,
+                        "max_depth": max_depth,
+                        "max_offset": max_offset,
+                    }),
+                )
+                .await?;
+            if output_json {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else if let Some(chains) = result.as_array() {
+                if chains.is_empty() {
+                    println!("No pointer chains found.");
+                } else {
+                    for (i, chain) in chains.iter().enumerate() {
+                        let module = chain["base_module"].as_str().unwrap_or("?");
+                        let offset = chain["base_offset"].as_u64().unwrap_or(0);
+                        let mut chain_str = format!("{module}+{offset:#x}");
+                        if let Some(links) = chain["links"].as_array() {
+                            for link in links {
+                                let off = link["offset"].as_i64().unwrap_or(0);
+                                use std::fmt::Write;
+                                let _ = write!(chain_str, " -> [+{off:#x}]");
+                            }
+                        }
+                        println!("  [{i}] {chain_str}");
+                    }
+                }
+            }
         }
     }
 
     Ok(())
 }
 
-/// Create the appropriate memory access implementation.
-fn create_memory_access() -> Arc<dyn pika::memory::MemoryAccess> {
+/// Create the appropriate memory access implementation (for serve/tui only).
+fn create_memory_access() -> std::sync::Arc<dyn pika::memory::MemoryAccess> {
     #[cfg(target_os = "linux")]
     {
-        Arc::new(LinuxMemoryAccess)
+        use pika::memory::linux::LinuxMemoryAccess;
+        std::sync::Arc::new(LinuxMemoryAccess)
     }
     #[cfg(not(target_os = "linux"))]
     {
+        use pika::memory::MockMemoryAccess;
         tracing::warn!("not running on Linux -- using mock memory access (no real scanning)");
-        Arc::new(MockMemoryAccess::new(0))
-    }
-}
-
-fn parse_hex(s: &str) -> Result<u64> {
-    let s = s
-        .strip_prefix("0x")
-        .or_else(|| s.strip_prefix("0X"))
-        .unwrap_or(s);
-    u64::from_str_radix(s, 16).map_err(|e| anyhow::anyhow!("invalid hex address: {e}"))
-}
-
-fn parse_dtype(s: &str) -> Result<pika::candidate::ValueType> {
-    match s.to_ascii_lowercase().as_str() {
-        "i32" => Ok(pika::candidate::ValueType::I32),
-        "u32" => Ok(pika::candidate::ValueType::U32),
-        "f32" => Ok(pika::candidate::ValueType::F32),
-        "i64" => Ok(pika::candidate::ValueType::I64),
-        "u64" => Ok(pika::candidate::ValueType::U64),
-        "f64" => Ok(pika::candidate::ValueType::F64),
-        "auto" => Ok(pika::candidate::ValueType::Auto),
-        _ => anyhow::bail!("unknown dtype: {s} (expected: i32, u32, f32, i64, u64, f64, auto)"),
+        std::sync::Arc::new(MockMemoryAccess::new(0))
     }
 }
 
 fn print_hex_dump(base_addr: u64, data: &[u8]) {
     for (i, chunk) in data.chunks(16).enumerate() {
         let addr = base_addr + (i * 16) as u64;
-        // Address
         print!("{addr:016x}  ");
-        // Hex bytes
         for (j, byte) in chunk.iter().enumerate() {
             if j == 8 {
                 print!(" ");
             }
             print!("{byte:02x} ");
         }
-        // Padding for short last line
         for j in chunk.len()..16 {
             if j == 8 {
                 print!(" ");
             }
             print!("   ");
         }
-        // ASCII
         print!(" |");
         for byte in chunk {
             if byte.is_ascii_graphic() || *byte == b' ' {
