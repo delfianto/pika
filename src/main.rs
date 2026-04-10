@@ -105,10 +105,11 @@ async fn main() -> Result<()> {
                 println!("Candidates remaining: {}", result["candidates"]);
                 if let Some(top) = result["top"].as_array() {
                     for (i, c) in top.iter().take(20).enumerate() {
+                        let types = format_types(&c["types"]);
                         println!(
-                            "  [{i}] {}  types={:?}  confidence={}",
+                            "  [{i}] {:<18} {:<16} confidence={}",
                             c["address"].as_str().unwrap_or("?"),
-                            c["types"],
+                            types,
                             c["confidence"]
                         );
                     }
@@ -414,5 +415,17 @@ fn print_hex_dump(base_addr: u64, data: &[u8]) {
             }
         }
         println!("|");
+    }
+}
+
+/// Format a JSON types array like `["i32", "u32"]` into `i32|u32`.
+fn format_types(types: &serde_json::Value) -> String {
+    match types.as_array() {
+        Some(arr) => arr
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect::<Vec<_>>()
+            .join("|"),
+        None => "?".to_string(),
     }
 }
