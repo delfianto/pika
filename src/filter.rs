@@ -60,8 +60,19 @@ pub fn filter_candidates(
     _dtype: ValueType,
     mode: FilterMode,
 ) -> Result<usize> {
+    let before = candidates.len();
+    tracing::debug!(
+        pid,
+        mode = ?mode,
+        candidates = before,
+        new_value,
+        "filtering candidates",
+    );
+    let filter_start = std::time::Instant::now();
+
     let patterns = encode_value_patterns(new_value);
     let mut retained = 0;
+    let mut unmapped = 0usize;
 
     for i in 0..candidates.len() {
         let candidate = candidates[i];
@@ -79,6 +90,7 @@ pub fn filter_candidates(
             .read(pid, candidate.address, &mut current_bytes[..read_size])
             .is_err()
         {
+            unmapped += 1;
             continue; // Address unmapped, discard candidate
         }
 
@@ -122,6 +134,16 @@ pub fn filter_candidates(
     }
 
     candidates.truncate(retained);
+
+    let elapsed = filter_start.elapsed();
+    tracing::debug!(
+        retained,
+        dropped = before - retained,
+        unmapped,
+        elapsed_ms = elapsed.as_millis(),
+        "filter complete ({before} -> {retained})",
+    );
+
     Ok(retained)
 }
 

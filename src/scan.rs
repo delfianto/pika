@@ -101,10 +101,21 @@ pub fn first_scan(
     dtype: ValueType,
 ) -> Result<ScanSession> {
     let regions = mem.read_maps(pid)?;
+    let total_regions = regions.len();
     let safe_regions: Vec<&MapRegion> = regions
         .iter()
         .filter(|r| r.safety == RegionSafety::Safe && r.permissions.read)
         .collect();
+
+    let total_scan_bytes: u64 = safe_regions.iter().map(|r| r.size()).sum();
+    tracing::debug!(
+        pid,
+        total_regions,
+        safe_regions = safe_regions.len(),
+        scan_bytes = total_scan_bytes,
+        "maps loaded, {:.1} MB to scan",
+        total_scan_bytes as f64 / 1_048_576.0,
+    );
 
     let patterns = encode_value_patterns(value);
     if patterns.is_empty() {
@@ -122,18 +133,38 @@ pub fn first_scan(
             .collect()
     };
 
+    tracing::debug!(
+        value,
+        dtype = %dtype,
+        patterns = patterns.len(),
+        "scanning for value",
+    );
+
+    let scan_start = std::time::Instant::now();
+
     // Scan all safe regions in parallel
     let candidates: Vec<Candidate> = safe_regions
         .par_iter()
         .flat_map(|region| scan_region(mem, pid, region, &patterns).unwrap_or_default())
         .collect();
 
+    let scan_elapsed = scan_start.elapsed();
+
     let mut sorted = candidates;
     sorted.sort_unstable();
     sorted.dedup_by_key(|c| c.address);
 
+    let session_id = Uuid::new_v4().to_string();
+    tracing::debug!(
+        session_id = %session_id,
+        candidates = sorted.len(),
+        elapsed_ms = scan_elapsed.as_millis(),
+        throughput_mb_s = format_args!("{:.0}", total_scan_bytes as f64 / scan_elapsed.as_secs_f64() / 1_048_576.0),
+        "scan complete",
+    );
+
     Ok(ScanSession {
-        id: Uuid::new_v4().to_string(),
+        id: session_id,
         pid,
         candidates: sorted,
         value,
@@ -450,6 +481,19 @@ pub fn aob_scan(
         })
         .collect();
 
+    let total_bytes: u64 = scan_regions.iter().map(|r| r.size()).sum();
+    tracing::debug!(
+        pid,
+        pattern_len = pattern.len(),
+        regions = scan_regions.len(),
+        scan_bytes = total_bytes,
+        include_readonly,
+        "AOB scan starting, {:.1} MB to search",
+        total_bytes as f64 / 1_048_576.0,
+    );
+
+    let aob_start = std::time::Instant::now();
+
     // Find the first non-wildcard byte for memchr anchoring
     let anchor = pattern
         .iter()
@@ -460,6 +504,12 @@ pub fn aob_scan(
         .par_iter()
         .flat_map(|region| aob_scan_region(mem, pid, region, pattern, anchor).unwrap_or_default())
         .collect();
+
+    tracing::debug!(
+        matches = results.len(),
+        elapsed_ms = aob_start.elapsed().as_millis(),
+        "AOB scan complete",
+    );
 
     Ok(results)
 }

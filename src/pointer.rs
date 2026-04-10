@@ -69,12 +69,25 @@ pub fn find_pointer_chains(
         })
         .collect();
 
+    let total_bytes: u64 = scannable.iter().map(|r| r.size()).sum();
+    tracing::debug!(
+        pid,
+        target = format_args!("{target_address:#x}"),
+        modules = modules.len(),
+        scannable_regions = scannable.len(),
+        scan_bytes = total_bytes,
+        max_depth = params.max_depth,
+        max_offset = params.max_offset,
+        "pointer scan starting, {:.1} MB to search",
+        total_bytes as f64 / 1_048_576.0,
+    );
+    let ptr_start = std::time::Instant::now();
+
     // Build a sorted list of mapped ranges for pointer validity checking
     let mapped_ranges: Vec<(u64, u64)> = regions.iter().map(|r| (r.start, r.end)).collect();
 
     let mut chains: Vec<PointerChain> = Vec::new();
     let mut visited: HashSet<u64> = HashSet::new();
-    // BFS queue: (current_target_address, chain_links_so_far)
     let mut queue: VecDeque<(u64, Vec<PointerLink>)> = VecDeque::new();
 
     queue.push_back((target_address, Vec::new()));
@@ -126,6 +139,13 @@ pub fn find_pointer_chains(
     // Sort by chain length (shorter = more stable)
     chains.sort_by_key(|c| c.links.len());
     chains.truncate(params.max_results);
+
+    tracing::debug!(
+        chains_found = chains.len(),
+        visited = visited.len(),
+        elapsed_ms = ptr_start.elapsed().as_millis(),
+        "pointer scan complete",
+    );
 
     Ok(chains)
 }

@@ -33,6 +33,14 @@ pub fn write_value(
 ) -> Result<()> {
     let data = encode_value(value, dtype)?;
 
+    tracing::debug!(
+        pid,
+        address = format_args!("{address:#x}"),
+        value,
+        dtype = %dtype,
+        "write requested, running pre-flight check",
+    );
+
     // ── Pre-flight safety check ─────────────────────────────────────────────
     // Re-read /proc/[pid]/maps and re-classify the target address.
     // DXVK can remap regions between scan and write.
@@ -58,7 +66,14 @@ pub fn write_value(
                 region.pathname,
             );
         }
-        Some(_) => {} // Safe -- proceed with write
+        Some(region) => {
+            tracing::debug!(
+                address = format_args!("{address:#x}"),
+                region = format_args!("{:#x}-{:#x}", region.start, region.end),
+                safety = ?region.safety,
+                "pre-flight passed",
+            );
+        }
     }
 
     // ── Perform the write ───────────────────────────────────────────────────
