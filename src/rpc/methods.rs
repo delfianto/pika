@@ -47,6 +47,8 @@ pub fn dispatch(state: &RpcState, req: &JsonRpcRequest) -> JsonRpcResponse {
         "scan.aob" => handle_scan_aob(state, &req.params),
         "memory.read" => handle_memory_read(state, &req.params),
         "memory.write" => handle_memory_write(state, &req.params),
+        "memory.write_all" => handle_memory_write_all(state, &req.params),
+        "freeze.start_all" => handle_freeze_start_all(state, &req.params),
         "memory.disassemble" => handle_memory_disassemble(state, &req.params),
         "pointer.scan" => handle_pointer_scan(state, &req.params),
         "freeze.start" => handle_freeze_start(state, &req.params),
@@ -327,6 +329,130 @@ fn handle_memory_write(state: &RpcState, params: &serde_json::Value) -> MethodRe
     })?;
 
     Ok(json!({ "ok": true }))
+}
+
+/// Default safety limit — refuse write-all/freeze-all if more candidates than this.
+const BULK_WRITE_LIMIT: usize = 16;
+
+fn handle_memory_write_all(state: &RpcState, params: &serde_json::Value) -> MethodResult {
+    let session_id = params.get("session_id").and_then(|v| v.as_str())
+        .ok_or_else(|| JsonRpcResponse::err(None, INVALID_PARAMS, "missing 'session_id'"))?;
+
+    let value = params.get("value").and_then(|v| v.as_f64())
+        .ok_or_else(|| JsonRpcResponse::err(None, INVALID_PARAMS, "missing 'value'"))?;
+
+    let dtype: ValueType = params.get("dtype")
+        .and_then(|v| serde_json::from_value(v.clone()).ok())
+        .ok_or_else(|| JsonRpcResponse::err(None, INVALID_PARAMS, "missing or invalid 'dtype'"))?;
+
+    let force = params.get("force").and_then(|v| v.as_bool()).unwrap_or(false);
+
+    let result = state.sessions.with_session(session_id, |session| {
+        let count = session.candidates.len();
+        if count > BULK_WRITE_LIMIT && !force {
+            return Err(JsonRpcResponse::err(
+                None,
+                INVALID_PARAMS,
+                format!(
+                    "refusing to write to {count} addresses (limit: {BULK_WRITE_LIMIT}). \
+                     Narrow your scan or use --force"
+                ),
+            ));
+        }
+
+        let mut written = Vec::new();
+        let mut errors = Vec::new();
+
+        for candidate in &session.candidates {
+            let addr = candidate.address;
+            match write_value(state.mem.as_ref(), session.pid, addr, value, dtype) {
+                Ok(()) => written.push(format!("{addr:#x}")),
+                Err(e) => errors.push(json!({"address": format!("{addr:#x}"), "error": e.to_string()})),
+            }
+        }
+
+        Ok(json!({
+            "written": written.len(),
+            "failed": errors.len(),
+            "addresses": written,
+            "errors": errors,
+        }))
+    });
+
+    match result {
+        Some(inner) => inner,
+        None => Err(JsonRpcResponse::err(
+            None,
+            INVALID_PARAMS,
+            format!("session '{session_id}' not found"),
+        )),
+    }
+}
+
+fn handle_freeze_start_all(state: &RpcState, params: &serde_json::Value) -> MethodResult {
+    let session_id = params.get("session_id").and_then(|v| v.as_str())
+        .ok_or_else(|| JsonRpcResponse::err(None, INVALID_PARAMS, "missing 'session_id'"))?;
+
+    let value = params.get("value").and_then(|v| v.as_f64())
+        .ok_or_else(|| JsonRpcResponse::err(None, INVALID_PARAMS, "missing 'value'"))?;
+
+    let dtype: ValueType = params.get("dtype")
+        .and_then(|v| serde_json::from_value(v.clone()).ok())
+        .ok_or_else(|| JsonRpcResponse::err(None, INVALID_PARAMS, "missing or invalid 'dtype'"))?;
+
+    let interval_ms = params.get("interval_ms").and_then(|v| v.as_u64()).unwrap_or(100);
+    let force = params.get("force").and_then(|v| v.as_bool()).unwrap_or(false);
+
+    let addresses: Vec<u64> = {
+        let result = state.sessions.with_session(session_id, |session| {
+            let count = session.candidates.len();
+            if count > BULK_WRITE_LIMIT && !force {
+                return Err(JsonRpcResponse::err(
+                    None,
+                    INVALID_PARAMS,
+                    format!(
+                        "refusing to freeze {count} addresses (limit: {BULK_WRITE_LIMIT}). \
+                         Narrow your scan or use --force"
+                    ),
+                ));
+            }
+            Ok((session.pid, session.candidates.iter().map(|c| c.address).collect::<Vec<_>>()))
+        });
+        match result {
+            Some(Ok((_, addrs))) => addrs,
+            Some(Err(e)) => return Err(e),
+            None => return Err(JsonRpcResponse::err(
+                None, INVALID_PARAMS, format!("session '{session_id}' not found"),
+            )),
+        }
+    };
+
+    // Get PID from session
+    let pid = state.sessions.with_session(session_id, |s| s.pid)
+        .unwrap_or(0);
+
+    let mut frozen = Vec::new();
+    let mut errors = Vec::new();
+
+    for addr in &addresses {
+        match state.freeze.start(crate::freeze::FreezeEntry {
+            pid,
+            address: *addr,
+            value,
+            dtype,
+            interval: Duration::from_millis(interval_ms),
+        }) {
+            Ok(()) => frozen.push(format!("{addr:#x}")),
+            Err(e) => errors.push(json!({"address": format!("{addr:#x}"), "error": e.to_string()})),
+        }
+    }
+
+    Ok(json!({
+        "frozen": frozen.len(),
+        "failed": errors.len(),
+        "addresses": frozen,
+        "errors": errors,
+    }))
 }
 
 fn handle_memory_disassemble(state: &RpcState, params: &serde_json::Value) -> MethodResult {

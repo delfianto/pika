@@ -214,6 +214,76 @@ async fn main() -> Result<()> {
             }
         }
 
+        Command::WriteAll {
+            session_id,
+            value,
+            dtype,
+            force,
+        } => {
+            let result = client
+                .call(
+                    "memory.write_all",
+                    json!({
+                        "session_id": session_id,
+                        "value": value,
+                        "dtype": dtype,
+                        "force": force,
+                    }),
+                )
+                .await?;
+            if output_json {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                let written = result["written"].as_u64().unwrap_or(0);
+                let failed = result["failed"].as_u64().unwrap_or(0);
+                if let Some(addrs) = result["addresses"].as_array() {
+                    for addr in addrs {
+                        println!("  wrote {value} ({dtype}) -> {}", addr.as_str().unwrap_or("?"));
+                    }
+                }
+                if failed > 0 {
+                    eprintln!("  {failed} write(s) failed (safety check or unmapped)");
+                }
+                println!("{written} addresses written.");
+            }
+        }
+
+        Command::FreezeAll {
+            session_id,
+            value,
+            dtype,
+            interval,
+            force,
+        } => {
+            let result = client
+                .call(
+                    "freeze.start_all",
+                    json!({
+                        "session_id": session_id,
+                        "value": value,
+                        "dtype": dtype,
+                        "interval_ms": interval,
+                        "force": force,
+                    }),
+                )
+                .await?;
+            if output_json {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                let frozen = result["frozen"].as_u64().unwrap_or(0);
+                let failed = result["failed"].as_u64().unwrap_or(0);
+                if let Some(addrs) = result["addresses"].as_array() {
+                    for addr in addrs {
+                        println!("  frozen {value} ({dtype}) -> {}", addr.as_str().unwrap_or("?"));
+                    }
+                }
+                if failed > 0 {
+                    eprintln!("  {failed} freeze(s) failed");
+                }
+                println!("{frozen} addresses frozen at {interval}ms interval.");
+            }
+        }
+
         Command::Freeze {
             pid,
             address,

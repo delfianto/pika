@@ -135,6 +135,44 @@ pub enum Command {
         interval: u64,
     },
 
+    /// Write a value to ALL candidates in a session (requires daemon)
+    WriteAll {
+        /// Session ID
+        session_id: String,
+
+        /// Value to write
+        value: f64,
+
+        /// Data type: i32, u32, f32, i64, u64, f64
+        #[arg(short, long)]
+        dtype: String,
+
+        /// Allow writing to more than 16 addresses
+        #[arg(long)]
+        force: bool,
+    },
+
+    /// Freeze ALL candidates in a session (requires daemon)
+    FreezeAll {
+        /// Session ID
+        session_id: String,
+
+        /// Value to freeze at
+        value: f64,
+
+        /// Data type: i32, u32, f32, i64, u64, f64
+        #[arg(short, long)]
+        dtype: String,
+
+        /// Write interval in milliseconds
+        #[arg(short, long, default_value = "100")]
+        interval: u64,
+
+        /// Allow freezing more than 16 addresses
+        #[arg(long)]
+        force: bool,
+    },
+
     /// Unfreeze a previously frozen address (requires daemon)
     Unfreeze {
         /// Hex address to unfreeze
