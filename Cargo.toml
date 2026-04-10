@@ -49,7 +49,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # Linux-specific dependencies (only compiled on Linux)
 [target.'cfg(target_os = "linux")'.dependencies]
-nix = { version = "0.29", features = ["process", "uio", "signal", "ptrace"] }
+nix = { version = "0.29", features = ["process", "uio", "signal", "ptrace", "user"] }
 capstone = "0.13"
 
 [dev-dependencies]

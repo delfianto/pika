@@ -310,7 +310,8 @@ unsafe fn scan_4byte_avx2(buffer: &[u8], needle: u32, alignment: usize) -> Vec<u
 
     let mut offset = 0;
     while offset < end {
-        let chunk = _mm256_loadu_si256(ptr.add(offset).cast::<__m256i>());
+        // SAFETY: offset + 32 <= len checked by loop condition; ptr is valid for buffer.
+        let chunk = unsafe { _mm256_loadu_si256(ptr.add(offset).cast::<__m256i>()) };
         let cmp = _mm256_cmpeq_epi32(chunk, needle_vec);
         let mask = _mm256_movemask_epi8(cmp) as u32;
 
@@ -368,7 +369,8 @@ unsafe fn scan_4byte_sse2(buffer: &[u8], needle: u32, alignment: usize) -> Vec<u
 
     let mut offset = 0;
     while offset < end {
-        let chunk = _mm_loadu_si128(ptr.add(offset).cast::<__m128i>());
+        // SAFETY: offset + 16 <= len checked by loop condition; ptr is valid for buffer.
+        let chunk = unsafe { _mm_loadu_si128(ptr.add(offset).cast::<__m128i>()) };
         let cmp = _mm_cmpeq_epi32(chunk, needle_vec);
         let mask = _mm_movemask_epi8(cmp) as u32;
 
