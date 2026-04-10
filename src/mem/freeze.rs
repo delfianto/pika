@@ -1,6 +1,6 @@
-use crate::candidate::ValueType;
-use crate::memory::MemoryAccess;
-use crate::write::write_value;
+use crate::scan::candidate::ValueType;
+use crate::mem::access::MemoryAccess;
+use crate::mem::write::write_value;
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -147,8 +147,8 @@ fn freeze_loop(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::maps::{MapRegion, Permissions, RegionSafety};
-    use crate::memory::MockMemoryAccess;
+    use crate::process::maps::{MapRegion, Permissions, RegionSafety};
+    use crate::mem::access::MockMemoryAccess;
 
     fn mock_with_region() -> Arc<MockMemoryAccess> {
         let mock = MockMemoryAccess::new(1);

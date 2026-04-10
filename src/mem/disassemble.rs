@@ -1,4 +1,4 @@
-use crate::memory::MemoryAccess;
+use crate::mem::access::MemoryAccess;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
@@ -87,7 +87,7 @@ mod tests {
     #[cfg(not(target_os = "linux"))]
     #[test]
     fn disassemble_errors_on_non_linux() {
-        let mock = crate::memory::MockMemoryAccess::new(1);
+        let mock = crate::mem::access::MockMemoryAccess::new(1);
         mock.add_region(0x1000, vec![0x90; 64]); // NOP sled
         let result = disassemble_at(&mock, 1, 0x1000, 5);
         assert!(result.is_err());

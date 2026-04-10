@@ -1,6 +1,6 @@
-use crate::candidate::ValueType;
-use crate::maps::RegionSafety;
-use crate::memory::MemoryAccess;
+use crate::scan::candidate::ValueType;
+use crate::process::maps::RegionSafety;
+use crate::mem::access::MemoryAccess;
 use anyhow::{Context, Result};
 
 /// Encode a numeric value into bytes according to the specified type.
@@ -94,8 +94,8 @@ pub fn write_value(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::maps::{MapRegion, Permissions};
-    use crate::memory::MockMemoryAccess;
+    use crate::process::maps::{MapRegion, Permissions};
+    use crate::mem::access::MockMemoryAccess;
 
     fn mock_with_safe_region() -> MockMemoryAccess {
         let mock = MockMemoryAccess::new(1);

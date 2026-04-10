@@ -1,5 +1,5 @@
-use crate::maps::{MapRegion, RegionSafety};
-use crate::memory::MemoryAccess;
+use crate::process::maps::{MapRegion, RegionSafety};
+use crate::mem::access::MemoryAccess;
 use anyhow::Result;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -263,8 +263,8 @@ pub fn extract_module_bases(regions: &[MapRegion]) -> Vec<(String, u64, u64)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::maps::Permissions;
-    use crate::memory::MockMemoryAccess;
+    use crate::process::maps::Permissions;
+    use crate::mem::access::MockMemoryAccess;
 
     fn rw_perms() -> Permissions {
         Permissions {

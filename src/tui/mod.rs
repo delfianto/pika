@@ -1,7 +1,7 @@
 pub mod app;
 pub mod ui;
 
-use crate::memory::MemoryAccess;
+use crate::mem::access::MemoryAccess;
 use anyhow::Result;
 use std::sync::Arc;
 

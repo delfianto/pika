@@ -39,7 +39,7 @@ async fn main() -> Result<()> {
 
         // ── Local-only commands (no daemon needed) ──────────────────────
         Command::Ps => {
-            let processes = pika::pid::list_wine_processes()?;
+            let processes = pika::process::pid::list_wine_processes()?;
             if output_json {
                 println!("{}", serde_json::to_string_pretty(&processes)?);
             } else if processes.is_empty() {
@@ -435,15 +435,15 @@ async fn main() -> Result<()> {
 }
 
 /// Create the appropriate memory access implementation (for serve/tui only).
-fn create_memory_access() -> std::sync::Arc<dyn pika::memory::MemoryAccess> {
+fn create_memory_access() -> std::sync::Arc<dyn pika::mem::access::MemoryAccess> {
     #[cfg(target_os = "linux")]
     {
-        use pika::memory::linux::LinuxMemoryAccess;
+        use pika::mem::access::linux::LinuxMemoryAccess;
         std::sync::Arc::new(LinuxMemoryAccess)
     }
     #[cfg(not(target_os = "linux"))]
     {
-        use pika::memory::MockMemoryAccess;
+        use pika::mem::access::MockMemoryAccess;
         tracing::warn!("not running on Linux -- using mock memory access (no real scanning)");
         std::sync::Arc::new(MockMemoryAccess::new(0))
     }
@@ -451,7 +451,7 @@ fn create_memory_access() -> std::sync::Arc<dyn pika::memory::MemoryAccess> {
 
 /// Run platform capability check and print warnings.
 fn run_platform_check() {
-    let check = pika::platform::check_platform();
+    let check = pika::process::platform::check_platform();
     for warning in &check.warnings {
         eprintln!("warning: {warning}");
     }

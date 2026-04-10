@@ -1,4 +1,4 @@
-use crate::memory::MemoryAccess;
+use crate::mem::access::MemoryAccess;
 use crate::rpc::methods::{RpcState, dispatch};
 use crate::rpc::types::*;
 use anyhow::Result;
@@ -116,8 +116,8 @@ fn process_line(state: &RpcState, line: &str) -> JsonRpcResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::maps::{MapRegion, Permissions, RegionSafety};
-    use crate::memory::MockMemoryAccess;
+    use crate::process::maps::{MapRegion, Permissions, RegionSafety};
+    use crate::mem::access::MockMemoryAccess;
 
     fn make_state() -> Arc<RpcState> {
         let mock = MockMemoryAccess::new(1);

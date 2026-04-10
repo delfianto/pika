@@ -1,13 +1,13 @@
 use std::fmt::Write as _;
 
-use crate::candidate::{CandidateJson, ValueType};
-use crate::filter::filter_candidates;
-use crate::freeze::{FreezeEntry, FreezeManager};
-use crate::memory::MemoryAccess;
-use crate::pid;
+use crate::scan::candidate::{CandidateJson, ValueType};
+use crate::scan::filter::filter_candidates;
+use crate::mem::freeze::{FreezeEntry, FreezeManager};
+use crate::mem::access::MemoryAccess;
+use crate::process::pid;
 use crate::rpc::types::*;
-use crate::scan::{SessionRegistry, first_scan};
-use crate::write::write_value;
+use crate::scan::engine::{SessionRegistry, first_scan};
+use crate::mem::write::write_value;
 use serde_json::json;
 use std::sync::Arc;
 use std::time::Duration;
@@ -162,7 +162,7 @@ fn handle_scan_filter(state: &RpcState, params: &serde_json::Value) -> MethodRes
         .get("mode")
         .and_then(|v| v.as_str())
         .unwrap_or("exact");
-    let mode = crate::filter::FilterMode::from_str_loose(mode_str).map_err(|e| {
+    let mode = crate::scan::filter::FilterMode::from_str_loose(mode_str).map_err(|e| {
         JsonRpcResponse::err(None, INVALID_PARAMS, e.to_string())
     })?;
 
@@ -200,10 +200,10 @@ fn handle_scan_aob(state: &RpcState, params: &serde_json::Value) -> MethodResult
 
     let include_readonly = params.get("include_readonly").and_then(|v| v.as_bool()).unwrap_or(false);
 
-    let pattern = crate::scan::parse_aob_pattern(pattern_str)
+    let pattern = crate::scan::engine::parse_aob_pattern(pattern_str)
         .map_err(|e| JsonRpcResponse::err(None, INVALID_PARAMS, e.to_string()))?;
 
-    let addresses = crate::scan::aob_scan(state.mem.as_ref(), pid, &pattern, include_readonly)
+    let addresses = crate::scan::engine::aob_scan(state.mem.as_ref(), pid, &pattern, include_readonly)
         .map_err(|e| JsonRpcResponse::err(None, INTERNAL_ERROR, e.to_string()))?;
 
     let addr_strings: Vec<String> = addresses.iter().map(|a| format!("{a:#x}")).collect();
@@ -435,7 +435,7 @@ fn handle_freeze_start_all(state: &RpcState, params: &serde_json::Value) -> Meth
     let mut errors = Vec::new();
 
     for addr in &addresses {
-        match state.freeze.start(crate::freeze::FreezeEntry {
+        match state.freeze.start(crate::mem::freeze::FreezeEntry {
             pid,
             address: *addr,
             value,
@@ -468,7 +468,7 @@ fn handle_memory_disassemble(state: &RpcState, params: &serde_json::Value) -> Me
         .unwrap_or(20) as usize;
 
     let instructions =
-        crate::disassemble::disassemble_at(state.mem.as_ref(), pid, address, num_instructions)
+        crate::mem::disassemble::disassemble_at(state.mem.as_ref(), pid, address, num_instructions)
             .map_err(|e| JsonRpcResponse::err(None, INTERNAL_ERROR, e.to_string()))?;
 
     Ok(json!(instructions))
@@ -488,13 +488,13 @@ fn handle_pointer_scan(state: &RpcState, params: &serde_json::Value) -> MethodRe
         JsonRpcResponse::err(None, INTERNAL_ERROR, e.to_string())
     })?;
 
-    let scan_params = crate::pointer::PointerScanParams {
+    let scan_params = crate::scan::pointer::PointerScanParams {
         max_offset,
         max_depth,
         max_results: 100,
     };
 
-    let chains = crate::pointer::find_pointer_chains(
+    let chains = crate::scan::pointer::find_pointer_chains(
         state.mem.as_ref(), pid, target, &regions, &scan_params,
     )
     .map_err(|e| JsonRpcResponse::err(None, INTERNAL_ERROR, e.to_string()))?;
@@ -551,8 +551,8 @@ fn parse_hex_address(value: Option<&serde_json::Value>) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::maps::{MapRegion, Permissions, RegionSafety};
-    use crate::memory::MockMemoryAccess;
+    use crate::process::maps::{MapRegion, Permissions, RegionSafety};
+    use crate::mem::access::MockMemoryAccess;
 
     fn make_state() -> RpcState {
         let mock = MockMemoryAccess::new(100);

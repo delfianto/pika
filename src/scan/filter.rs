@@ -1,5 +1,5 @@
-use crate::candidate::{Candidate, TypeFlags, ValueType, encode_value_patterns};
-use crate::memory::MemoryAccess;
+use crate::scan::candidate::{Candidate, TypeFlags, ValueType, encode_value_patterns};
+use crate::mem::access::MemoryAccess;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
@@ -229,8 +229,8 @@ fn check_comparison(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::maps::{MapRegion, Permissions, RegionSafety};
-    use crate::memory::MockMemoryAccess;
+    use crate::process::maps::{MapRegion, Permissions, RegionSafety};
+    use crate::mem::access::MockMemoryAccess;
 
     fn setup_mock_with_values(values: &[(u64, i32)]) -> MockMemoryAccess {
         let mock = MockMemoryAccess::new(1);

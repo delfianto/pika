@@ -1,14 +1,6 @@
-pub mod candidate;
 pub mod cli;
-pub mod disassemble;
-pub mod filter;
-pub mod freeze;
-pub mod maps;
-pub mod memory;
-pub mod pid;
-pub mod platform;
-pub mod pointer;
+pub mod mem;
+pub mod process;
 pub mod rpc;
 pub mod scan;
 pub mod tui;
-pub mod write;

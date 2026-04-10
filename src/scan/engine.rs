@@ -1,6 +1,6 @@
-use crate::candidate::{Candidate, TypeFlags, ValueType, encode_value_patterns};
-use crate::maps::{MapRegion, RegionSafety};
-use crate::memory::MemoryAccess;
+use crate::scan::candidate::{Candidate, TypeFlags, ValueType, encode_value_patterns};
+use crate::process::maps::{MapRegion, RegionSafety};
+use crate::mem::access::MemoryAccess;
 use anyhow::Result;
 use rayon::prelude::*;
 use std::collections::HashMap;
@@ -610,8 +610,8 @@ fn aob_matches(data: &[u8], pattern: &[Option<u8>]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::maps::{MapRegion, Permissions};
-    use crate::memory::MockMemoryAccess;
+    use crate::process::maps::{MapRegion, Permissions};
+    use crate::mem::access::MockMemoryAccess;
 
     /// Helper: create a buffer with a known i32 value at specific offsets.
     fn buffer_with_i32(size: usize, value: i32, offsets: &[usize]) -> Vec<u8> {

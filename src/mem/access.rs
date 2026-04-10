@@ -2,7 +2,7 @@ use anyhow::Result;
 use std::collections::BTreeMap;
 use std::sync::{Arc, RwLock};
 
-use crate::maps::MapRegion;
+use crate::process::maps::MapRegion;
 
 /// Abstraction over process memory access.
 /// Real implementation uses `process_vm_readv`/`writev` on Linux.
@@ -55,7 +55,7 @@ pub mod linux {
 
         fn read_maps(&self, pid: u32) -> Result<Vec<MapRegion>> {
             let content = std::fs::read_to_string(format!("/proc/{pid}/maps"))?;
-            crate::maps::parse_maps(&content)
+            crate::process::maps::parse_maps(&content)
         }
     }
 }
@@ -182,7 +182,7 @@ impl MemoryAccess for MockMemoryAccess {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::maps::{MapRegion, Permissions, RegionSafety};
+    use crate::process::maps::{MapRegion, Permissions, RegionSafety};
 
     fn make_mock() -> MockMemoryAccess {
         let mock = MockMemoryAccess::new(1234);

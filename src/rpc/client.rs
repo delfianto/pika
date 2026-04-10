@@ -67,8 +67,8 @@ impl RpcClient {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::maps::{MapRegion, Permissions, RegionSafety};
-    use crate::memory::MockMemoryAccess;
+    use crate::process::maps::{MapRegion, Permissions, RegionSafety};
+    use crate::mem::access::MockMemoryAccess;
     use crate::rpc::server::serve_unix_socket;
     use std::sync::Arc;
 
