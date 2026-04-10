@@ -22,9 +22,11 @@ pub async fn serve_unix_socket(
         let (stream, _) = listener.accept().await?;
         let state = state.clone();
         tokio::spawn(async move {
+            tracing::debug!("client connected");
             if let Err(e) = handle_connection(stream, &state).await {
                 tracing::error!("connection error: {e}");
             }
+            tracing::debug!("client disconnected");
         });
     }
 }
@@ -83,11 +85,32 @@ fn process_line(state: &RpcState, line: &str) -> JsonRpcResponse {
     let request: JsonRpcRequest = match serde_json::from_str(line) {
         Ok(req) => req,
         Err(e) => {
+            tracing::warn!("JSON parse error: {e}");
             return JsonRpcResponse::err(None, PARSE_ERROR, format!("JSON parse error: {e}"));
         }
     };
 
-    dispatch(state, &request)
+    tracing::debug!(method = %request.method, id = ?request.id, "RPC request");
+    let start = std::time::Instant::now();
+    let response = dispatch(state, &request);
+    let elapsed = start.elapsed();
+
+    if response.error.is_some() {
+        tracing::warn!(
+            method = %request.method,
+            elapsed_ms = elapsed.as_millis(),
+            error = ?response.error,
+            "RPC error"
+        );
+    } else {
+        tracing::debug!(
+            method = %request.method,
+            elapsed_ms = elapsed.as_millis(),
+            "RPC ok"
+        );
+    }
+
+    response
 }
 
 #[cfg(test)]
