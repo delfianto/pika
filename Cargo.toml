@@ -3,7 +3,7 @@ name = "pika"
 version = "0.1.0"
 edition = "2024"
 description = "Non-stopping memory scanner for Wine/Proton games"
-license = "MIT"
+license = "GPL-3.0-only"
 rust-version = "1.85"
 
 [[bin]]

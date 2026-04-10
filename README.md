@@ -180,4 +180,4 @@ CLI commands ──> Unix socket ──> pika serve (daemon)
 
 ## License
 
-MIT
+GPL-3.0
