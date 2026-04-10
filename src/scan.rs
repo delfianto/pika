@@ -303,21 +303,16 @@ unsafe fn scan_4byte_avx2(buffer: &[u8], needle: u32, alignment: usize) -> Vec<u
         return scan_4byte_scalar(buffer, needle, alignment);
     }
 
-    // SAFETY: AVX2 is confirmed available by caller.
-    // `_mm256_set1_epi32` broadcasts `needle` to all 8 lanes.
-    let needle_vec = unsafe { _mm256_set1_epi32(needle as i32) };
+    // AVX2 confirmed available by caller via `is_x86_feature_detected!`.
+    let needle_vec = _mm256_set1_epi32(needle as i32);
     let ptr = buffer.as_ptr();
     let end = len.saturating_sub(31);
 
-    // Process 32-byte blocks. Within each block, check which 4-byte lanes match.
     let mut offset = 0;
     while offset < end {
-        // SAFETY: `offset + 32 <= len` checked by loop condition.
-        let chunk = unsafe { _mm256_loadu_si256(ptr.add(offset).cast::<__m256i>()) };
-        // SAFETY: Comparing loaded data against needle.
-        let cmp = unsafe { _mm256_cmpeq_epi32(chunk, needle_vec) };
-        // SAFETY: Extracting comparison bitmask.
-        let mask = unsafe { _mm256_movemask_epi8(cmp) } as u32;
+        let chunk = _mm256_loadu_si256(ptr.add(offset).cast::<__m256i>());
+        let cmp = _mm256_cmpeq_epi32(chunk, needle_vec);
+        let mask = _mm256_movemask_epi8(cmp) as u32;
 
         if mask != 0 {
             // Each matching i32 lane produces 4 consecutive 1-bits in the mask.
@@ -338,10 +333,7 @@ unsafe fn scan_4byte_avx2(buffer: &[u8], needle: u32, alignment: usize) -> Vec<u
     }
 
     // Handle tail bytes with scalar scan
-    let tail_start = (offset / alignment) * alignment;
-    let mut tail_offset = tail_start.max(offset.saturating_sub(32).max(0));
-    // Deduplicate: only scan offsets not already covered
-    tail_offset = offset;
+    let mut tail_offset = offset;
     while tail_offset + 4 <= len {
         if tail_offset % alignment == 0 {
             let val = u32::from_le_bytes(
@@ -369,19 +361,16 @@ unsafe fn scan_4byte_sse2(buffer: &[u8], needle: u32, alignment: usize) -> Vec<u
         return scan_4byte_scalar(buffer, needle, alignment);
     }
 
-    // SAFETY: SSE2 is confirmed available (always present on x86_64).
-    let needle_vec = unsafe { _mm_set1_epi32(needle as i32) };
+    // SSE2 always available on x86_64.
+    let needle_vec = _mm_set1_epi32(needle as i32);
     let ptr = buffer.as_ptr();
     let end = len.saturating_sub(15);
 
     let mut offset = 0;
     while offset < end {
-        // SAFETY: `offset + 16 <= len` checked by loop condition.
-        let chunk = unsafe { _mm_loadu_si128(ptr.add(offset).cast::<__m128i>()) };
-        // SAFETY: Comparing loaded data against needle.
-        let cmp = unsafe { _mm_cmpeq_epi32(chunk, needle_vec) };
-        // SAFETY: Extracting comparison bitmask.
-        let mask = unsafe { _mm_movemask_epi8(cmp) } as u32;
+        let chunk = _mm_loadu_si128(ptr.add(offset).cast::<__m128i>());
+        let cmp = _mm_cmpeq_epi32(chunk, needle_vec);
+        let mask = _mm_movemask_epi8(cmp) as u32;
 
         if mask != 0 {
             for lane in 0..4u32 {

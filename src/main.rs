@@ -23,6 +23,7 @@ async fn main() -> Result<()> {
     match cli.command {
         // ── Server / TUI (non-client commands) ──────────────────────────
         Command::Serve { stdio } => {
+            run_platform_check();
             let mem = create_memory_access();
             if stdio {
                 pika::rpc::server::serve_stdio(mem).await?;
@@ -374,6 +375,17 @@ fn create_memory_access() -> std::sync::Arc<dyn pika::memory::MemoryAccess> {
         use pika::memory::MockMemoryAccess;
         tracing::warn!("not running on Linux -- using mock memory access (no real scanning)");
         std::sync::Arc::new(MockMemoryAccess::new(0))
+    }
+}
+
+/// Run platform capability check and print warnings.
+fn run_platform_check() {
+    let check = pika::platform::check_platform();
+    for warning in &check.warnings {
+        eprintln!("warning: {warning}");
+    }
+    if check.can_scan {
+        tracing::info!("platform check passed -- memory scanning available");
     }
 }
 

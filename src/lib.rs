@@ -6,6 +6,7 @@ pub mod freeze;
 pub mod maps;
 pub mod memory;
 pub mod pid;
+pub mod platform;
 pub mod pointer;
 pub mod rpc;
 pub mod scan;
