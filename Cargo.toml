@@ -37,7 +37,7 @@ bitflags = { version = "2", features = ["serde"] }
 dashmap = "6"
 
 # Identifiers
-nanoid = "0.4"
+nid = "3"
 
 # TUI
 ratatui = "0.29"

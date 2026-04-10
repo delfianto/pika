@@ -5,7 +5,7 @@ use anyhow::Result;
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::sync::Mutex;
-use nanoid::nanoid;
+use nid::Nanoid;
 
 /// Default chunk size for `process_vm_readv` calls (4 MB).
 const DEFAULT_CHUNK_SIZE: usize = 4 * 1024 * 1024;
@@ -154,7 +154,7 @@ pub fn first_scan(
     sorted.sort_unstable();
     sorted.dedup_by_key(|c| c.address);
 
-    let session_id = nanoid!(12);
+    let session_id = Nanoid::<12>::new().to_string();
     tracing::debug!(
         session_id = %session_id,
         candidates = sorted.len(),
