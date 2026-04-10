@@ -37,7 +37,7 @@ bitflags = { version = "2", features = ["serde"] }
 dashmap = "6"
 
 # Identifiers
-uuid = { version = "1", features = ["v4"] }
+nanoid = "0.4"
 
 # TUI
 ratatui = "0.29"
