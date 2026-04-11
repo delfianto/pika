@@ -5,18 +5,40 @@ use anyhow::Result;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
+type SharedState = Arc<RpcState>;
+
 /// Start the JSON-RPC server on a Unix domain socket.
 pub async fn serve_unix_socket(
     socket_path: &str,
     mem: Arc<dyn MemoryAccess>,
 ) -> Result<()> {
-    // Clean up stale socket
-    let _ = std::fs::remove_file(socket_path);
+    // Check for an existing socket -- avoid hijacking a running daemon.
+    if std::path::Path::new(socket_path).exists() {
+        match std::os::unix::net::UnixStream::connect(socket_path) {
+            Ok(_) => {
+                anyhow::bail!(
+                    "another pika daemon is already running on {socket_path}. \
+                     Stop it first or use a different --socket path."
+                );
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::ConnectionRefused => {
+                // Socket file exists but nobody is listening -- stale, safe to remove.
+                tracing::info!("removing stale socket at {socket_path}");
+                std::fs::remove_file(socket_path)?;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                // Race: socket disappeared between exists() and connect(). Safe to proceed.
+            }
+            Err(e) => {
+                anyhow::bail!("cannot check existing socket at {socket_path}: {e}");
+            }
+        }
+    }
 
     let listener = tokio::net::UnixListener::bind(socket_path)?;
     tracing::info!("listening on {socket_path}");
 
-    let state = Arc::new(RpcState::new(mem));
+    let state: SharedState = Arc::new(RpcState::new(mem));
 
     loop {
         let (stream, _) = listener.accept().await?;
@@ -35,7 +57,7 @@ pub async fn serve_unix_socket(
 pub async fn serve_stdio(mem: Arc<dyn MemoryAccess>) -> Result<()> {
     tracing::info!("serving JSON-RPC on stdio");
 
-    let state = Arc::new(RpcState::new(mem));
+    let state: SharedState = Arc::new(RpcState::new(mem));
     let stdin = tokio::io::stdin();
     let mut stdout = tokio::io::stdout();
     let mut lines = BufReader::new(stdin).lines();
@@ -46,7 +68,7 @@ pub async fn serve_stdio(mem: Arc<dyn MemoryAccess>) -> Result<()> {
             continue;
         }
 
-        let response = process_line(&state, &line);
+        let response = process_line(&state, &line).await;
         let json = serde_json::to_string(&response)?;
         stdout.write_all(json.as_bytes()).await?;
         stdout.write_all(b"\n").await?;
@@ -59,7 +81,7 @@ pub async fn serve_stdio(mem: Arc<dyn MemoryAccess>) -> Result<()> {
 /// Handle a single connection (Unix socket).
 async fn handle_connection(
     stream: tokio::net::UnixStream,
-    state: &RpcState,
+    state: &SharedState,
 ) -> Result<()> {
     let (reader, mut writer) = stream.into_split();
     let mut lines = BufReader::new(reader).lines();
@@ -70,7 +92,7 @@ async fn handle_connection(
             continue;
         }
 
-        let response = process_line(state, &line);
+        let response = process_line(state, &line).await;
         let json = serde_json::to_string(&response)?;
         writer.write_all(json.as_bytes()).await?;
         writer.write_all(b"\n").await?;
@@ -81,7 +103,7 @@ async fn handle_connection(
 }
 
 /// Parse a JSON-RPC line and dispatch to the method handler.
-fn process_line(state: &RpcState, line: &str) -> JsonRpcResponse {
+async fn process_line(state: &SharedState, line: &str) -> JsonRpcResponse {
     let request: JsonRpcRequest = match serde_json::from_str(line) {
         Ok(req) => req,
         Err(e) => {
@@ -92,7 +114,7 @@ fn process_line(state: &RpcState, line: &str) -> JsonRpcResponse {
 
     tracing::debug!(method = %request.method, id = ?request.id, "RPC request");
     let start = std::time::Instant::now();
-    let response = dispatch(state, &request);
+    let response = dispatch(state.clone(), &request).await;
     let elapsed = start.elapsed();
 
     if response.error.is_some() {
@@ -135,28 +157,28 @@ mod tests {
         Arc::new(RpcState::new(Arc::new(mock)))
     }
 
-    #[test]
-    fn process_valid_request() {
+    #[tokio::test]
+    async fn process_valid_request() {
         let state = make_state();
         let line = r#"{"jsonrpc":"2.0","method":"pid.list","params":{},"id":1}"#;
-        let resp = process_line(&state, line);
+        let resp = process_line(&state, line).await;
         assert!(resp.error.is_none());
         assert!(resp.result.is_some());
     }
 
-    #[test]
-    fn process_invalid_json() {
+    #[tokio::test]
+    async fn process_invalid_json() {
         let state = make_state();
-        let resp = process_line(&state, "not json at all");
+        let resp = process_line(&state, "not json at all").await;
         assert!(resp.error.is_some());
         assert_eq!(resp.error.unwrap().code, PARSE_ERROR);
     }
 
-    #[test]
-    fn process_missing_method() {
+    #[tokio::test]
+    async fn process_missing_method() {
         let state = make_state();
         let line = r#"{"jsonrpc":"2.0","method":"does.not.exist","params":{},"id":1}"#;
-        let resp = process_line(&state, line);
+        let resp = process_line(&state, line).await;
         assert!(resp.error.is_some());
         assert_eq!(resp.error.unwrap().code, METHOD_NOT_FOUND);
     }

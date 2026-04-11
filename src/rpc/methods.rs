@@ -30,30 +30,53 @@ impl RpcState {
 }
 
 /// Dispatch a JSON-RPC request to the appropriate handler.
-pub fn dispatch(state: &RpcState, req: &JsonRpcRequest) -> JsonRpcResponse {
+///
+/// Heavy CPU-bound handlers (scan, filter, AOB, pointer scan) are offloaded to
+/// `tokio::task::spawn_blocking` so they don't starve the async executor.
+pub async fn dispatch(state: Arc<RpcState>, req: &JsonRpcRequest) -> JsonRpcResponse {
     if let Err(e) = req.validate() {
         return JsonRpcResponse::err(req.id.clone(), INVALID_REQUEST, e);
     }
 
+    // Heavy handlers: offload to the blocking threadpool to avoid starving
+    // Tokio worker threads while Rayon parallelises across memory regions.
+    match req.method.as_str() {
+        "scan.start" | "scan.filter" | "scan.aob" | "pointer.scan" => {
+            let state = state.clone();
+            let params = req.params.clone();
+            let id = req.id.clone();
+            let method = req.method.clone();
+            return match tokio::task::spawn_blocking(move || {
+                dispatch_heavy(&state, &method, &params)
+            })
+            .await
+            {
+                Ok(Ok(value)) => JsonRpcResponse::ok(id, value),
+                Ok(Err(resp)) => resp,
+                Err(e) => {
+                    JsonRpcResponse::err(id, INTERNAL_ERROR, format!("task panicked: {e}"))
+                }
+            };
+        }
+        _ => {}
+    }
+
+    // Light handlers: run inline on the async task (microsecond operations).
     let result = match req.method.as_str() {
         "pid.list" => handle_pid_list(),
         "pid.find" => handle_pid_find(&req.params),
-        "maps.get" => handle_maps_get(state, &req.params),
-        "scan.start" => handle_scan_start(state, &req.params),
-        "scan.filter" => handle_scan_filter(state, &req.params),
-        "scan.discard" => handle_scan_discard(state, &req.params),
-        "scan.list" => handle_scan_list(state),
-        "scan.candidates" => handle_scan_candidates(state, &req.params),
-        "scan.aob" => handle_scan_aob(state, &req.params),
-        "memory.read" => handle_memory_read(state, &req.params),
-        "memory.write" => handle_memory_write(state, &req.params),
-        "memory.write_all" => handle_memory_write_all(state, &req.params),
-        "freeze.start_all" => handle_freeze_start_all(state, &req.params),
-        "memory.disassemble" => handle_memory_disassemble(state, &req.params),
-        "pointer.scan" => handle_pointer_scan(state, &req.params),
-        "freeze.start" => handle_freeze_start(state, &req.params),
-        "freeze.stop" => handle_freeze_stop(state, &req.params),
-        "freeze.list" => handle_freeze_list(state),
+        "maps.get" => handle_maps_get(&state, &req.params),
+        "scan.discard" => handle_scan_discard(&state, &req.params),
+        "scan.list" => handle_scan_list(&state),
+        "scan.candidates" => handle_scan_candidates(&state, &req.params),
+        "memory.read" => handle_memory_read(&state, &req.params),
+        "memory.write" => handle_memory_write(&state, &req.params),
+        "memory.write_all" => handle_memory_write_all(&state, &req.params),
+        "freeze.start_all" => handle_freeze_start_all(&state, &req.params),
+        "memory.disassemble" => handle_memory_disassemble(&state, &req.params),
+        "freeze.start" => handle_freeze_start(&state, &req.params),
+        "freeze.stop" => handle_freeze_stop(&state, &req.params),
+        "freeze.list" => handle_freeze_list(&state),
         _ => Err(JsonRpcResponse::err(
             req.id.clone(),
             METHOD_NOT_FOUND,
@@ -64,6 +87,21 @@ pub fn dispatch(state: &RpcState, req: &JsonRpcRequest) -> JsonRpcResponse {
     match result {
         Ok(value) => JsonRpcResponse::ok(req.id.clone(), value),
         Err(resp) => resp,
+    }
+}
+
+/// Dispatch heavy (CPU-bound) RPC methods. Runs on the blocking threadpool.
+fn dispatch_heavy(
+    state: &RpcState,
+    method: &str,
+    params: &serde_json::Value,
+) -> MethodResult {
+    match method {
+        "scan.start" => handle_scan_start(state, params),
+        "scan.filter" => handle_scan_filter(state, params),
+        "scan.aob" => handle_scan_aob(state, params),
+        "pointer.scan" => handle_pointer_scan(state, params),
+        _ => unreachable!("dispatch_heavy called with non-heavy method: {method}"),
     }
 }
 
@@ -554,7 +592,7 @@ mod tests {
     use crate::process::maps::{MapRegion, Permissions, RegionSafety};
     use crate::mem::access::MockMemoryAccess;
 
-    fn make_state() -> RpcState {
+    fn make_state() -> Arc<RpcState> {
         let mock = MockMemoryAccess::new(100);
         let mut data = vec![0u8; 4096];
         data[0..4].copy_from_slice(&42_i32.to_le_bytes());
@@ -566,11 +604,11 @@ mod tests {
             offset: 0, device: "00:00".to_string(), inode: 0, pathname: String::new(),
             safety: RegionSafety::Safe,
         }]);
-        RpcState::new(Arc::new(mock))
+        Arc::new(RpcState::new(Arc::new(mock)))
     }
 
-    #[test]
-    fn dispatch_pid_list() {
+    #[tokio::test]
+    async fn dispatch_pid_list() {
         let state = make_state();
         let req = JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
@@ -578,13 +616,13 @@ mod tests {
             params: json!({}),
             id: Some(json!(1)),
         };
-        let resp = dispatch(&state, &req);
+        let resp = dispatch(state, &req).await;
         assert!(resp.result.is_some());
         assert!(resp.error.is_none());
     }
 
-    #[test]
-    fn dispatch_unknown_method() {
+    #[tokio::test]
+    async fn dispatch_unknown_method() {
         let state = make_state();
         let req = JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
@@ -592,13 +630,13 @@ mod tests {
             params: json!({}),
             id: Some(json!(1)),
         };
-        let resp = dispatch(&state, &req);
+        let resp = dispatch(state, &req).await;
         assert!(resp.error.is_some());
         assert_eq!(resp.error.unwrap().code, METHOD_NOT_FOUND);
     }
 
-    #[test]
-    fn dispatch_scan_start_and_filter() {
+    #[tokio::test]
+    async fn dispatch_scan_start_and_filter() {
         let state = make_state();
 
         // Start scan
@@ -608,7 +646,7 @@ mod tests {
             params: json!({"pid": 100, "value": 42}),
             id: Some(json!(1)),
         };
-        let resp = dispatch(&state, &req);
+        let resp = dispatch(state.clone(), &req).await;
         assert!(resp.error.is_none(), "scan.start error: {:?}", resp.error);
         let result = resp.result.unwrap();
         let session_id = result["session_id"].as_str().unwrap().to_string();
@@ -621,12 +659,12 @@ mod tests {
             params: json!({"session_id": session_id, "new_value": 42}),
             id: Some(json!(2)),
         };
-        let resp = dispatch(&state, &req);
+        let resp = dispatch(state, &req).await;
         assert!(resp.error.is_none(), "scan.filter error: {:?}", resp.error);
     }
 
-    #[test]
-    fn dispatch_memory_read() {
+    #[tokio::test]
+    async fn dispatch_memory_read() {
         let state = make_state();
         let req = JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
@@ -634,7 +672,7 @@ mod tests {
             params: json!({"pid": 100, "address": "0x140000000", "length": 16}),
             id: Some(json!(1)),
         };
-        let resp = dispatch(&state, &req);
+        let resp = dispatch(state, &req).await;
         assert!(resp.error.is_none());
         let result = resp.result.unwrap();
         assert_eq!(result["bytes_read"], 16);
@@ -642,8 +680,8 @@ mod tests {
         assert_eq!(result["interpretations"]["i32"], 42);
     }
 
-    #[test]
-    fn dispatch_memory_write() {
+    #[tokio::test]
+    async fn dispatch_memory_write() {
         let state = make_state();
         let req = JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
@@ -651,7 +689,7 @@ mod tests {
             params: json!({"pid": 100, "address": "0x140000000", "value": 999, "dtype": "i32"}),
             id: Some(json!(1)),
         };
-        let resp = dispatch(&state, &req);
+        let resp = dispatch(state.clone(), &req).await;
         assert!(resp.error.is_none(), "write error: {:?}", resp.error);
 
         // Verify the write
@@ -661,7 +699,7 @@ mod tests {
             params: json!({"pid": 100, "address": "0x140000000", "length": 4}),
             id: Some(json!(2)),
         };
-        let resp = dispatch(&state, &req);
+        let resp = dispatch(state, &req).await;
         let result = resp.result.unwrap();
         assert_eq!(result["interpretations"]["i32"], 999);
     }
@@ -676,8 +714,8 @@ mod tests {
         assert_eq!(parse_hex_address(Some(&json!(42))), None); // not a string
     }
 
-    #[test]
-    fn dispatch_scan_discard() {
+    #[tokio::test]
+    async fn dispatch_scan_discard() {
         let state = make_state();
 
         // Start a session
@@ -687,7 +725,7 @@ mod tests {
             params: json!({"pid": 100, "value": 42}),
             id: Some(json!(1)),
         };
-        let resp = dispatch(&state, &req);
+        let resp = dispatch(state.clone(), &req).await;
         let session_id = resp.result.unwrap()["session_id"].as_str().unwrap().to_string();
 
         // Discard it
@@ -697,7 +735,7 @@ mod tests {
             params: json!({"session_id": session_id}),
             id: Some(json!(2)),
         };
-        let resp = dispatch(&state, &req);
+        let resp = dispatch(state.clone(), &req).await;
         assert!(resp.result.unwrap()["discarded"].as_bool().unwrap());
 
         // Discard again -- should be false
@@ -707,7 +745,7 @@ mod tests {
             params: json!({"session_id": "nonexistent"}),
             id: Some(json!(3)),
         };
-        let resp = dispatch(&state, &req);
+        let resp = dispatch(state, &req).await;
         assert!(!resp.result.unwrap()["discarded"].as_bool().unwrap());
     }
 }

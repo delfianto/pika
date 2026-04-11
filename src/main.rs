@@ -4,6 +4,15 @@ use pika::cli::{Cli, Command};
 use pika::rpc::client::RpcClient;
 use serde_json::json;
 
+/// Print `$data` as pretty JSON when `$json` is true, otherwise run `$human`.
+macro_rules! output {
+    ($json:expr, $data:expr, $human:block) => {
+        if $json {
+            println!("{}", serde_json::to_string_pretty(&$data)?);
+        } else $human
+    };
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -40,24 +49,22 @@ async fn main() -> Result<()> {
         // ── Local-only commands (no daemon needed) ──────────────────────
         Command::Ps => {
             let processes = pika::process::pid::list_wine_processes()?;
-            if output_json {
-                println!("{}", serde_json::to_string_pretty(&processes)?);
-            } else if processes.is_empty() {
-                println!("No Wine/Proton game processes found.");
-            } else {
-                println!("{:<8} NAME", "PID");
-                for p in &processes {
-                    println!("{:<8} {}", p.pid, p.name);
+            output!(output_json, processes, {
+                if processes.is_empty() {
+                    println!("No Wine/Proton game processes found.");
+                } else {
+                    println!("{:<8} NAME", "PID");
+                    for p in &processes {
+                        println!("{:<8} {}", p.pid, p.name);
+                    }
                 }
-            }
+            });
         }
 
         // ── Daemon-routed commands ──────────────────────────────────────
         Command::Maps { pid } => {
             let result = client.call("maps.get", json!({"pid": pid})).await?;
-            if output_json {
-                println!("{}", serde_json::to_string_pretty(&result)?);
-            } else {
+            output!(output_json, result, {
                 let regions = result.as_array().unwrap_or(&Vec::new()).clone();
                 println!(
                     "{:<20} {:<20} {:<6} {:<12} PATH",
@@ -73,19 +80,17 @@ async fn main() -> Result<()> {
                         r["pathname"].as_str().unwrap_or(""),
                     );
                 }
-            }
+            });
         }
 
         Command::Scan { pid, value, dtype } => {
             let result = client
                 .call("scan.start", json!({"pid": pid, "value": value, "dtype": dtype}))
                 .await?;
-            if output_json {
-                println!("{}", serde_json::to_string_pretty(&result)?);
-            } else {
+            output!(output_json, result, {
                 println!("Session: {}", result["session_id"].as_str().unwrap_or("?"));
                 println!("Candidates: {}", result["candidates"]);
-            }
+            });
         }
 
         Command::Filter {
@@ -99,9 +104,7 @@ async fn main() -> Result<()> {
                     json!({"session_id": session_id, "new_value": new_value, "mode": mode}),
                 )
                 .await?;
-            if output_json {
-                println!("{}", serde_json::to_string_pretty(&result)?);
-            } else {
+            output!(output_json, result, {
                 println!("Candidates remaining: {}", result["candidates"]);
                 if let Some(top) = result["top"].as_array() {
                     for (i, c) in top.iter().take(20).enumerate() {
@@ -117,14 +120,12 @@ async fn main() -> Result<()> {
                         println!("  ... and {} more", top.len() - 20);
                     }
                 }
-            }
+            });
         }
 
         Command::Sessions => {
             let result = client.call("scan.list", json!({})).await?;
-            if output_json {
-                println!("{}", serde_json::to_string_pretty(&result)?);
-            } else {
+            output!(output_json, result, {
                 let sessions = result.as_array().unwrap_or(&Vec::new()).clone();
                 if sessions.is_empty() {
                     println!("No active scan sessions.");
@@ -141,20 +142,20 @@ async fn main() -> Result<()> {
                         );
                     }
                 }
-            }
+            });
         }
 
         Command::Discard { session_id } => {
             let result = client
                 .call("scan.discard", json!({"session_id": session_id}))
                 .await?;
-            if output_json {
-                println!("{}", serde_json::to_string_pretty(&result)?);
-            } else if result["discarded"].as_bool().unwrap_or(false) {
-                println!("Session {session_id} discarded.");
-            } else {
-                println!("Session {session_id} not found.");
-            }
+            output!(output_json, result, {
+                if result["discarded"].as_bool().unwrap_or(false) {
+                    println!("Session {session_id} discarded.");
+                } else {
+                    println!("Session {session_id} not found.");
+                }
+            });
         }
 
         Command::Read {
@@ -168,9 +169,7 @@ async fn main() -> Result<()> {
                     json!({"pid": pid, "address": address, "length": length}),
                 )
                 .await?;
-            if output_json {
-                println!("{}", serde_json::to_string_pretty(&result)?);
-            } else {
+            output!(output_json, result, {
                 let hex = result["hex"].as_str().unwrap_or("");
                 let addr = u64::from_str_radix(
                     result["address"]
@@ -192,7 +191,7 @@ async fn main() -> Result<()> {
                         println!("  {k}: {v}");
                     }
                 }
-            }
+            });
         }
 
         Command::Write {
@@ -207,11 +206,9 @@ async fn main() -> Result<()> {
                     json!({"pid": pid, "address": address, "value": value, "dtype": dtype}),
                 )
                 .await?;
-            if output_json {
-                println!("{}", serde_json::to_string_pretty(&result)?);
-            } else {
+            output!(output_json, result, {
                 println!("Wrote {value} ({dtype}) to {address}");
-            }
+            });
         }
 
         Command::WriteAll {
@@ -231,9 +228,7 @@ async fn main() -> Result<()> {
                     }),
                 )
                 .await?;
-            if output_json {
-                println!("{}", serde_json::to_string_pretty(&result)?);
-            } else {
+            output!(output_json, result, {
                 let written = result["written"].as_u64().unwrap_or(0);
                 let failed = result["failed"].as_u64().unwrap_or(0);
                 if let Some(addrs) = result["addresses"].as_array() {
@@ -245,7 +240,7 @@ async fn main() -> Result<()> {
                     eprintln!("  {failed} write(s) failed (safety check or unmapped)");
                 }
                 println!("{written} addresses written.");
-            }
+            });
         }
 
         Command::FreezeAll {
@@ -267,9 +262,7 @@ async fn main() -> Result<()> {
                     }),
                 )
                 .await?;
-            if output_json {
-                println!("{}", serde_json::to_string_pretty(&result)?);
-            } else {
+            output!(output_json, result, {
                 let frozen = result["frozen"].as_u64().unwrap_or(0);
                 let failed = result["failed"].as_u64().unwrap_or(0);
                 if let Some(addrs) = result["addresses"].as_array() {
@@ -281,7 +274,7 @@ async fn main() -> Result<()> {
                     eprintln!("  {failed} freeze(s) failed");
                 }
                 println!("{frozen} addresses frozen at {interval}ms interval.");
-            }
+            });
         }
 
         Command::Freeze {
@@ -303,29 +296,23 @@ async fn main() -> Result<()> {
                     }),
                 )
                 .await?;
-            if output_json {
-                println!("{}", serde_json::to_string_pretty(&result)?);
-            } else {
+            output!(output_json, result, {
                 println!("Frozen: {address} = {value} ({dtype}), interval={interval}ms");
-            }
+            });
         }
 
         Command::Unfreeze { address } => {
             let result = client
                 .call("freeze.stop", json!({"address": address}))
                 .await?;
-            if output_json {
-                println!("{}", serde_json::to_string_pretty(&result)?);
-            } else {
+            output!(output_json, result, {
                 println!("Unfrozen: {address}");
-            }
+            });
         }
 
         Command::FreezeList => {
             let result = client.call("freeze.list", json!({})).await?;
-            if output_json {
-                println!("{}", serde_json::to_string_pretty(&result)?);
-            } else {
+            output!(output_json, result, {
                 let freezes = result.as_array().unwrap_or(&Vec::new()).clone();
                 if freezes.is_empty() {
                     println!("No active freezes.");
@@ -341,7 +328,7 @@ async fn main() -> Result<()> {
                         );
                     }
                 }
-            }
+            });
         }
 
         Command::Disasm {
@@ -355,18 +342,18 @@ async fn main() -> Result<()> {
                     json!({"pid": pid, "address": address, "num_instructions": count}),
                 )
                 .await?;
-            if output_json {
-                println!("{}", serde_json::to_string_pretty(&result)?);
-            } else if let Some(insns) = result.as_array() {
-                for insn in insns {
-                    println!(
-                        "  {}: {} {}",
-                        insn["address"].as_str().unwrap_or("?"),
-                        insn["mnemonic"].as_str().unwrap_or("?"),
-                        insn["op_str"].as_str().unwrap_or(""),
-                    );
+            output!(output_json, result, {
+                if let Some(insns) = result.as_array() {
+                    for insn in insns {
+                        println!(
+                            "  {}: {} {}",
+                            insn["address"].as_str().unwrap_or("?"),
+                            insn["mnemonic"].as_str().unwrap_or("?"),
+                            insn["op_str"].as_str().unwrap_or(""),
+                        );
+                    }
                 }
-            }
+            });
         }
 
         Command::Aob {
@@ -380,14 +367,14 @@ async fn main() -> Result<()> {
                     json!({"pid": pid, "pattern": pattern, "include_readonly": include_readonly}),
                 )
                 .await?;
-            if output_json {
-                println!("{}", serde_json::to_string_pretty(&result)?);
-            } else if let Some(addrs) = result["addresses"].as_array() {
-                println!("Found {} matches:", addrs.len());
-                for addr in addrs {
-                    println!("  {}", addr.as_str().unwrap_or("?"));
+            output!(output_json, result, {
+                if let Some(addrs) = result["addresses"].as_array() {
+                    println!("Found {} matches:", addrs.len());
+                    for addr in addrs {
+                        println!("  {}", addr.as_str().unwrap_or("?"));
+                    }
                 }
-            }
+            });
         }
 
         Command::PointerScan {
@@ -407,27 +394,27 @@ async fn main() -> Result<()> {
                     }),
                 )
                 .await?;
-            if output_json {
-                println!("{}", serde_json::to_string_pretty(&result)?);
-            } else if let Some(chains) = result.as_array() {
-                if chains.is_empty() {
-                    println!("No pointer chains found.");
-                } else {
-                    for (i, chain) in chains.iter().enumerate() {
-                        let module = chain["base_module"].as_str().unwrap_or("?");
-                        let offset = chain["base_offset"].as_u64().unwrap_or(0);
-                        let mut chain_str = format!("{module}+{offset:#x}");
-                        if let Some(links) = chain["links"].as_array() {
-                            for link in links {
-                                let off = link["offset"].as_i64().unwrap_or(0);
-                                use std::fmt::Write;
-                                let _ = write!(chain_str, " -> [+{off:#x}]");
+            output!(output_json, result, {
+                if let Some(chains) = result.as_array() {
+                    if chains.is_empty() {
+                        println!("No pointer chains found.");
+                    } else {
+                        for (i, chain) in chains.iter().enumerate() {
+                            let module = chain["base_module"].as_str().unwrap_or("?");
+                            let offset = chain["base_offset"].as_u64().unwrap_or(0);
+                            let mut chain_str = format!("{module}+{offset:#x}");
+                            if let Some(links) = chain["links"].as_array() {
+                                for link in links {
+                                    let off = link["offset"].as_i64().unwrap_or(0);
+                                    use std::fmt::Write;
+                                    let _ = write!(chain_str, " -> [+{off:#x}]");
+                                }
                             }
+                            println!("  [{i}] {chain_str}");
                         }
-                        println!("  [{i}] {chain_str}");
                     }
                 }
-            }
+            });
         }
     }
 

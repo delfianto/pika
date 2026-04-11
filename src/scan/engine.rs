@@ -2,9 +2,8 @@ use crate::scan::candidate::{Candidate, TypeFlags, ValueType, encode_value_patte
 use crate::process::maps::{MapRegion, RegionSafety};
 use crate::mem::access::MemoryAccess;
 use anyhow::Result;
+use dashmap::DashMap;
 use rayon::prelude::*;
-use std::collections::HashMap;
-use std::sync::Mutex;
 use nid::Nanoid;
 
 /// Default chunk size for `process_vm_readv` calls (4 MB).
@@ -30,57 +29,59 @@ pub struct SessionSummary {
 }
 
 /// Global registry of active scan sessions.
+///
+/// Uses `DashMap` for per-shard locking so concurrent access to different
+/// sessions never contends.
 pub struct SessionRegistry {
-    sessions: Mutex<HashMap<String, ScanSession>>,
+    sessions: DashMap<String, ScanSession>,
 }
 
 impl SessionRegistry {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            sessions: Mutex::new(HashMap::new()),
+            sessions: DashMap::new(),
         }
     }
 
     pub fn insert(&self, session: ScanSession) {
-        self.sessions
-            .lock()
-            .unwrap()
-            .insert(session.id.clone(), session);
+        self.sessions.insert(session.id.clone(), session);
     }
 
     pub fn get_candidate_count(&self, session_id: &str) -> Option<usize> {
         self.sessions
-            .lock()
-            .unwrap()
             .get(session_id)
-            .map(|s| s.candidates.len())
+            .map(|entry| entry.candidates.len())
     }
 
     pub fn remove(&self, session_id: &str) -> Option<ScanSession> {
-        self.sessions.lock().unwrap().remove(session_id)
+        self.sessions.remove(session_id).map(|(_, v)| v)
     }
 
     /// Access a session mutably via a closure.
+    /// Only the shard containing this key is locked, not the entire registry.
     pub fn with_session<F, R>(&self, session_id: &str, f: F) -> Option<R>
     where
         F: FnOnce(&mut ScanSession) -> R,
     {
-        self.sessions.lock().unwrap().get_mut(session_id).map(f)
+        self.sessions
+            .get_mut(session_id)
+            .map(|mut entry| f(entry.value_mut()))
     }
 
     /// List all active sessions with summary info.
     pub fn list(&self) -> Vec<SessionSummary> {
         self.sessions
-            .lock()
-            .unwrap()
-            .values()
-            .map(|s| SessionSummary {
-                id: s.id.clone(),
-                pid: s.pid,
-                candidates: s.candidates.len(),
-                value: s.value,
-                dtype: s.dtype,
+            .iter()
+            .map(|entry| {
+                let s = entry.value();
+                SessionSummary {
+                    id: s.id.clone(),
+                    pid: s.pid,
+                    candidates: s.candidates.len(),
+                    value: s.value,
+                    dtype: s.dtype,
+                }
             })
             .collect()
     }
@@ -515,6 +516,11 @@ pub fn aob_scan(
 }
 
 /// Scan a single region for an AOB pattern.
+///
+/// Uses a sliding window to avoid redundant syscalls at chunk boundaries:
+/// the last `pat_len - 1` bytes of each chunk are carried over to the front
+/// of the buffer for the next read, so matches spanning chunks are found
+/// without re-reading from the kernel.
 fn aob_scan_region(
     mem: &dyn MemoryAccess,
     pid: u32,
@@ -522,35 +528,51 @@ fn aob_scan_region(
     pattern: &[Option<u8>],
     anchor: Option<(usize, &Option<u8>)>,
 ) -> Result<Vec<u64>> {
+    aob_scan_region_chunked(mem, pid, region, pattern, anchor, DEFAULT_CHUNK_SIZE)
+}
+
+/// Inner implementation with configurable chunk size (for testing boundary conditions).
+fn aob_scan_region_chunked(
+    mem: &dyn MemoryAccess,
+    pid: u32,
+    region: &MapRegion,
+    pattern: &[Option<u8>],
+    anchor: Option<(usize, &Option<u8>)>,
+    max_chunk: usize,
+) -> Result<Vec<u64>> {
     let size = region.size() as usize;
     let pat_len = pattern.len();
     if size < pat_len {
         return Ok(Vec::new());
     }
 
-    let chunk_size = if size <= DEFAULT_CHUNK_SIZE {
-        size
-    } else {
-        DEFAULT_CHUNK_SIZE
-    };
+    let chunk_size = if size <= max_chunk { size } else { max_chunk };
 
+    let overlap = pat_len - 1;
     let mut results = Vec::new();
     let mut buffer = vec![0u8; chunk_size];
-    let mut offset = 0usize;
+    let mut offset = 0usize; // tracks how far into the region the *next read* starts
+    let mut prefix_len = 0usize; // carried-over bytes at buffer[0..prefix_len]
 
     while offset < size {
-        let read_len = chunk_size.min(size - offset);
+        let max_new = chunk_size - prefix_len;
+        let read_len = max_new.min(size - offset);
         let address = region.start + offset as u64;
 
-        let Ok(bytes_read) = mem.read(pid, address, &mut buffer[..read_len]) else {
+        let Ok(bytes_read) = mem.read(pid, address, &mut buffer[prefix_len..prefix_len + read_len]) else {
             break;
         };
-        if bytes_read < pat_len {
+
+        let total = prefix_len + bytes_read;
+        if total < pat_len {
             break;
         }
 
+        // base_address maps buffer[0] back to the process address space
+        let base_address = region.start + (offset as u64) - (prefix_len as u64);
+
         // Use anchor byte with memchr for fast skipping, or linear scan if all wildcards
-        let buf = &buffer[..bytes_read];
+        let buf = &buffer[..total];
         match anchor {
             Some((anchor_offset, Some(anchor_byte))) => {
                 let mut pos = 0;
@@ -566,7 +588,7 @@ fn aob_scan_region(
                             if candidate_start + pat_len <= buf.len()
                                 && aob_matches(&buf[candidate_start..candidate_start + pat_len], pattern)
                             {
-                                results.push(address + candidate_start as u64);
+                                results.push(base_address + candidate_start as u64);
                             }
                             pos = candidate_start + 1;
                         }
@@ -578,17 +600,25 @@ fn aob_scan_region(
                 // No anchor (all wildcards) -- linear scan
                 for pos in 0..=buf.len() - pat_len {
                     if aob_matches(&buf[pos..pos + pat_len], pattern) {
-                        results.push(address + pos as u64);
+                        results.push(base_address + pos as u64);
                     }
                 }
             }
         }
 
-        // Overlap: re-read the last (pat_len - 1) bytes to catch matches spanning chunks
-        if bytes_read == read_len && offset + bytes_read < size {
-            offset += bytes_read - (pat_len - 1);
+        // Advance offset by the new bytes we actually consumed
+        offset += bytes_read;
+
+        // Carry over the last `overlap` bytes for the next iteration
+        if offset < size && total >= overlap {
+            buffer.copy_within(total - overlap..total, 0);
+            prefix_len = overlap;
         } else {
-            offset += bytes_read;
+            prefix_len = 0;
+        }
+
+        if bytes_read < read_len {
+            break; // Partial read, rest of region is unmapped
         }
     }
 
@@ -955,5 +985,42 @@ mod tests {
         let pattern = parse_aob_pattern("AA BB").unwrap();
         let results = aob_scan(&mock, 1, &pattern, false).unwrap();
         assert!(results.is_empty(), "should not scan NeverTouch regions");
+    }
+
+    #[test]
+    fn aob_scan_finds_pattern_spanning_chunk_boundary() {
+        // Use a small chunk size (32 bytes) so the pattern at offset 30
+        // straddles the boundary between chunk 0 (bytes 0..32) and chunk 1.
+        let mock = MockMemoryAccess::new(1);
+        let mut data = vec![0u8; 128];
+        // Pattern "AA BB CC DD EE" at offset 30 -- spans bytes 30..35
+        data[30] = 0xAA;
+        data[31] = 0xBB;
+        data[32] = 0xCC;
+        data[33] = 0xDD;
+        data[34] = 0xEE;
+        // Also plant one entirely within a chunk at offset 10
+        data[10] = 0xAA;
+        data[11] = 0xBB;
+        data[12] = 0xCC;
+        data[13] = 0xDD;
+        data[14] = 0xEE;
+        mock.add_region(0x5000, data);
+
+        let region = MapRegion {
+            start: 0x5000,
+            end: 0x5080,
+            permissions: Permissions { read: true, write: true, execute: false, shared: false },
+            offset: 0, device: "00:00".to_string(), inode: 0, pathname: String::new(),
+            safety: RegionSafety::Safe,
+        };
+
+        let pattern = parse_aob_pattern("AA BB CC DD EE").unwrap();
+        let anchor = pattern.iter().enumerate().find(|(_, b)| b.is_some());
+        let results = aob_scan_region_chunked(&mock, 1, &region, &pattern, anchor, 32).unwrap();
+
+        assert_eq!(results.len(), 2, "should find both the in-chunk and boundary-spanning match");
+        assert!(results.contains(&(0x5000 + 10)), "should find match at offset 10");
+        assert!(results.contains(&(0x5000 + 30)), "should find match at offset 30 (spans chunk boundary)");
     }
 }
