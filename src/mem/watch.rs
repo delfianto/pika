@@ -4,6 +4,10 @@ use serde::{Deserialize, Serialize};
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
+// Re-export libc from nix for ptrace raw syscalls on Linux.
+#[cfg(target_os = "linux")]
+use nix::libc;
+
 /// Which operations to watch for.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub enum WatchMode {

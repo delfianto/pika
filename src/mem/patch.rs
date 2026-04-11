@@ -233,6 +233,7 @@ impl Drop for PatchManager {
 /// the process. Requires same-UID or CAP_SYS_PTRACE.
 #[cfg(target_os = "linux")]
 pub fn write_code(pid: u32, address: u64, data: &[u8]) -> Result<usize> {
+    use anyhow::Context as _;
     use std::io::{Seek, SeekFrom, Write};
 
     let path = format!("/proc/{pid}/mem");
