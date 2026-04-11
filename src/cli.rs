@@ -224,4 +224,77 @@ pub enum Command {
         #[arg(long, default_value = "4096")]
         max_offset: i64,
     },
+
+    /// Set a hardware watchpoint on an address (Linux only, requires daemon)
+    Watch {
+        /// Process ID
+        pid: u32,
+
+        /// Hex address to watch
+        address: String,
+
+        /// Watch mode: write (default) or access (read+write)
+        #[arg(long, default_value = "write")]
+        mode: String,
+
+        /// Watch size in bytes: 1, 2, 4 (default), or 8
+        #[arg(long, default_value = "4")]
+        size: u8,
+
+        /// Capture full register state on each hit
+        #[arg(long)]
+        detail: bool,
+    },
+
+    /// Show hits from a watchpoint (requires daemon)
+    WatchHits {
+        /// Watch ID returned by the watch command
+        watch_id: String,
+    },
+
+    /// Stop a hardware watchpoint (requires daemon)
+    WatchStop {
+        /// Watch ID to stop
+        watch_id: String,
+    },
+
+    /// List active watchpoints (requires daemon)
+    WatchList,
+
+    /// NOP an instruction at a code address (requires daemon)
+    Nop {
+        /// Process ID
+        pid: u32,
+
+        /// Hex address of instruction to NOP
+        address: String,
+
+        /// Number of bytes to NOP (default: auto-detect from instruction size)
+        #[arg(short = 'n', long)]
+        size: Option<usize>,
+    },
+
+    /// Patch bytes at a code address (requires daemon)
+    Patch {
+        /// Process ID
+        pid: u32,
+
+        /// Hex address to patch
+        address: String,
+
+        /// Hex bytes to write (e.g., "90 90 90" or "eb 05")
+        bytes: String,
+    },
+
+    /// Restore a previously patched code address (requires daemon)
+    Restore {
+        /// Process ID
+        pid: u32,
+
+        /// Hex address to restore
+        address: String,
+    },
+
+    /// List all active code patches (requires daemon)
+    PatchList,
 }

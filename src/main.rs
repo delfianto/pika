@@ -416,6 +416,125 @@ async fn main() -> Result<()> {
                 }
             });
         }
+
+        // ── Watch commands ─────────────────────────────────────────────
+        Command::Watch { pid, address, mode, size, detail } => {
+            let result = client.call("watch.start", json!({
+                "pid": pid, "address": address, "mode": mode,
+                "size": size, "detail": detail,
+            })).await?;
+            output!(output_json, result, {
+                let watch_id = result["watch_id"].as_str().unwrap_or("?");
+                println!("Watchpoint set: {watch_id}");
+                println!("  address: {address}, mode: {mode}, size: {size}");
+                println!("  Use:  pika watch-hits {watch_id}");
+                println!("  Stop: pika watch-stop {watch_id}");
+            });
+        }
+
+        Command::WatchHits { watch_id } => {
+            let result = client.call("watch.hits", json!({"watch_id": watch_id})).await?;
+            output!(output_json, result, {
+                if let Some(hits) = result.as_array() {
+                    if hits.is_empty() {
+                        println!("No hits yet. Change the value in-game and check again.");
+                    } else {
+                        println!("{:<6} {:<20} INSTRUCTION", "HITS", "RIP");
+                        for hit in hits {
+                            println!("  {:<6} {:<20} {}",
+                                hit["hit_count"],
+                                hit["rip"].as_str().unwrap_or("?"),
+                                hit["disasm"].as_str().unwrap_or("(unknown)"),
+                            );
+                        }
+                        println!("\nTo NOP a writer: pika nop <pid> <rip>");
+                    }
+                }
+            });
+        }
+
+        Command::WatchStop { watch_id } => {
+            let result = client.call("watch.stop", json!({"watch_id": watch_id})).await?;
+            output!(output_json, result, {
+                println!("Watchpoint {watch_id} stopped.");
+            });
+        }
+
+        Command::WatchList => {
+            let result = client.call("watch.list", json!({})).await?;
+            output!(output_json, result, {
+                let watches = result.as_array().unwrap_or(&Vec::new()).clone();
+                if watches.is_empty() {
+                    println!("No active watchpoints.");
+                } else {
+                    println!("{:<14} {:<8} {:<20} {:<8} {:<6} HITS", "WATCH_ID", "PID", "ADDRESS", "MODE", "SIZE");
+                    for w in &watches {
+                        println!("{:<14} {:<8} {:<20} {:<8} {:<6} {}",
+                            w["watch_id"].as_str().unwrap_or("?"),
+                            w["pid"],
+                            w["address"].as_str().unwrap_or("?"),
+                            w["mode"].as_str().unwrap_or("?"),
+                            w["size"],
+                            w["hit_count"],
+                        );
+                    }
+                }
+            });
+        }
+
+        // ── Code patch commands ────────────────────────────────────────
+        Command::Nop { pid, address, size } => {
+            let mut params = json!({"pid": pid, "address": address});
+            if let Some(s) = size {
+                params["size"] = json!(s);
+            }
+            let result = client.call("code.nop", params).await?;
+            output!(output_json, result, {
+                println!("NOPed at {address}");
+                println!("  original: {}", result["original_bytes"].as_str().unwrap_or("?"));
+                println!("  patched:  {}", result["patched_bytes"].as_str().unwrap_or("?"));
+                println!("  Restore:  pika restore {pid} {address}");
+            });
+        }
+
+        Command::Patch { pid, address, bytes } => {
+            let result = client.call("code.patch", json!({
+                "pid": pid, "address": address, "bytes": bytes,
+            })).await?;
+            output!(output_json, result, {
+                println!("Patched at {address}");
+                println!("  original: {}", result["original_bytes"].as_str().unwrap_or("?"));
+                println!("  Restore:  pika restore {pid} {address}");
+            });
+        }
+
+        Command::Restore { pid, address } => {
+            let result = client.call("code.restore", json!({
+                "pid": pid, "address": address,
+            })).await?;
+            output!(output_json, result, {
+                println!("Restored original bytes at {address}");
+            });
+        }
+
+        Command::PatchList => {
+            let result = client.call("code.list", json!({})).await?;
+            output!(output_json, result, {
+                let patches = result.as_array().unwrap_or(&Vec::new()).clone();
+                if patches.is_empty() {
+                    println!("No active patches.");
+                } else {
+                    println!("{:<20} {:<30} PATCHED", "ADDRESS", "ORIGINAL");
+                    for p in &patches {
+                        println!("{:<20} {:<30} {}",
+                            p["address"].as_str().unwrap_or("?"),
+                            p["original_bytes"].as_str().unwrap_or("?"),
+                            p["patched_bytes"].as_str().unwrap_or("?"),
+                        );
+                    }
+                }
+            });
+        }
     }
 
     Ok(())

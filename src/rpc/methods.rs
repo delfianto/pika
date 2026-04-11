@@ -3,6 +3,8 @@ use std::fmt::Write as _;
 use crate::scan::candidate::{CandidateJson, ValueType};
 use crate::scan::filter::filter_candidates;
 use crate::mem::freeze::{FreezeEntry, FreezeManager};
+use crate::mem::patch::{self, PatchManager};
+use crate::mem::watch::{WatchConfig, WatchManager, WatchMode, WatchSize};
 use crate::mem::access::MemoryAccess;
 use crate::process::pid;
 use crate::rpc::types::*;
@@ -17,6 +19,8 @@ pub struct RpcState {
     pub mem: Arc<dyn MemoryAccess>,
     pub sessions: SessionRegistry,
     pub freeze: FreezeManager,
+    pub patch: PatchManager,
+    pub watch: WatchManager,
 }
 
 impl RpcState {
@@ -24,6 +28,8 @@ impl RpcState {
         Self {
             sessions: SessionRegistry::new(),
             freeze: FreezeManager::new(mem.clone()),
+            patch: PatchManager::new(mem.clone()),
+            watch: WatchManager::new(mem.clone()),
             mem,
         }
     }
@@ -77,6 +83,14 @@ pub async fn dispatch(state: Arc<RpcState>, req: &JsonRpcRequest) -> JsonRpcResp
         "freeze.start" => handle_freeze_start(&state, &req.params),
         "freeze.stop" => handle_freeze_stop(&state, &req.params),
         "freeze.list" => handle_freeze_list(&state),
+        "watch.start" => handle_watch_start(&state, &req.params),
+        "watch.hits" => handle_watch_hits(&state, &req.params),
+        "watch.stop" => handle_watch_stop(&state, &req.params),
+        "watch.list" => handle_watch_list(&state),
+        "code.nop" => handle_code_nop(&state, &req.params),
+        "code.patch" => handle_code_patch(&state, &req.params),
+        "code.restore" => handle_code_restore(&state, &req.params),
+        "code.list" => handle_code_list(&state),
         _ => Err(JsonRpcResponse::err(
             req.id.clone(),
             METHOD_NOT_FOUND,
@@ -578,6 +592,119 @@ fn handle_freeze_stop(state: &RpcState, params: &serde_json::Value) -> MethodRes
 fn handle_freeze_list(state: &RpcState) -> MethodResult {
     Ok(json!(state.freeze.list()))
 }
+
+// ─── Watch handlers ─────────────────────────────────────────────────────────
+
+fn handle_watch_start(state: &RpcState, params: &serde_json::Value) -> MethodResult {
+    let pid = params.get("pid").and_then(|v| v.as_u64()).map(|v| v as u32)
+        .ok_or_else(|| JsonRpcResponse::err(None, INVALID_PARAMS, "missing 'pid'"))?;
+    let address = parse_hex_address(params.get("address"))
+        .ok_or_else(|| JsonRpcResponse::err(None, INVALID_PARAMS, "missing or invalid 'address'"))?;
+    let mode = match params.get("mode").and_then(|v| v.as_str()).unwrap_or("write") {
+        "write" => WatchMode::Write,
+        "access" | "readwrite" | "read_write" => WatchMode::ReadWrite,
+        other => return Err(JsonRpcResponse::err(None, INVALID_PARAMS,
+            format!("invalid mode: {other} (expected 'write' or 'access')"))),
+    };
+    let size = match params.get("size").and_then(|v| v.as_u64()).unwrap_or(4) {
+        1 => WatchSize::Byte1,
+        2 => WatchSize::Byte2,
+        4 => WatchSize::Byte4,
+        8 => WatchSize::Byte8,
+        n => return Err(JsonRpcResponse::err(None, INVALID_PARAMS,
+            format!("invalid size: {n} (expected 1, 2, 4, or 8)"))),
+    };
+    let detail = params.get("detail").and_then(|v| v.as_bool()).unwrap_or(false);
+
+    let config = WatchConfig { pid, address, mode, size, capture_registers: detail };
+    let watch_id = state.watch.start(config).map_err(|e| {
+        JsonRpcResponse::err(None, INTERNAL_ERROR, e.to_string())
+    })?;
+
+    Ok(json!({ "watch_id": watch_id }))
+}
+
+fn handle_watch_hits(state: &RpcState, params: &serde_json::Value) -> MethodResult {
+    let watch_id = params.get("watch_id").and_then(|v| v.as_str())
+        .ok_or_else(|| JsonRpcResponse::err(None, INVALID_PARAMS, "missing 'watch_id'"))?;
+    let hits = state.watch.hits(watch_id).map_err(|e| {
+        JsonRpcResponse::err(None, INTERNAL_ERROR, e.to_string())
+    })?;
+    Ok(json!(hits))
+}
+
+fn handle_watch_stop(state: &RpcState, params: &serde_json::Value) -> MethodResult {
+    let watch_id = params.get("watch_id").and_then(|v| v.as_str())
+        .ok_or_else(|| JsonRpcResponse::err(None, INVALID_PARAMS, "missing 'watch_id'"))?;
+    state.watch.stop(watch_id).map_err(|e| {
+        JsonRpcResponse::err(None, INTERNAL_ERROR, e.to_string())
+    })?;
+    Ok(json!({ "ok": true }))
+}
+
+fn handle_watch_list(state: &RpcState) -> MethodResult {
+    Ok(json!(state.watch.list()))
+}
+
+// ─── Code patch handlers ────────────────────────────────────────────────────
+
+fn handle_code_nop(state: &RpcState, params: &serde_json::Value) -> MethodResult {
+    let pid = params.get("pid").and_then(|v| v.as_u64()).map(|v| v as u32)
+        .ok_or_else(|| JsonRpcResponse::err(None, INVALID_PARAMS, "missing 'pid'"))?;
+    let address = parse_hex_address(params.get("address"))
+        .ok_or_else(|| JsonRpcResponse::err(None, INVALID_PARAMS, "missing or invalid 'address'"))?;
+    let size = params.get("size").and_then(|v| v.as_u64()).map(|v| v as usize);
+
+    let record = state.patch.nop_at(pid, address, size).map_err(|e| {
+        JsonRpcResponse::err(None, INTERNAL_ERROR, e.to_string())
+    })?;
+
+    Ok(json!({
+        "ok": true,
+        "address": format!("{:#x}", record.address),
+        "original_bytes": patch::hex_encode(&record.original_bytes),
+        "patched_bytes": patch::hex_encode(&record.patched_bytes),
+    }))
+}
+
+fn handle_code_patch(state: &RpcState, params: &serde_json::Value) -> MethodResult {
+    let pid = params.get("pid").and_then(|v| v.as_u64()).map(|v| v as u32)
+        .ok_or_else(|| JsonRpcResponse::err(None, INVALID_PARAMS, "missing 'pid'"))?;
+    let address = parse_hex_address(params.get("address"))
+        .ok_or_else(|| JsonRpcResponse::err(None, INVALID_PARAMS, "missing or invalid 'address'"))?;
+    let bytes_hex = params.get("bytes").and_then(|v| v.as_str())
+        .ok_or_else(|| JsonRpcResponse::err(None, INVALID_PARAMS, "missing 'bytes'"))?;
+    let bytes = patch::hex_decode(bytes_hex).map_err(|e| {
+        JsonRpcResponse::err(None, INVALID_PARAMS, format!("invalid hex bytes: {e}"))
+    })?;
+
+    let record = state.patch.patch_at(pid, address, &bytes).map_err(|e| {
+        JsonRpcResponse::err(None, INTERNAL_ERROR, e.to_string())
+    })?;
+
+    Ok(json!({
+        "ok": true,
+        "address": format!("{:#x}", record.address),
+        "original_bytes": patch::hex_encode(&record.original_bytes),
+    }))
+}
+
+fn handle_code_restore(state: &RpcState, params: &serde_json::Value) -> MethodResult {
+    let pid = params.get("pid").and_then(|v| v.as_u64()).map(|v| v as u32)
+        .ok_or_else(|| JsonRpcResponse::err(None, INVALID_PARAMS, "missing 'pid'"))?;
+    let address = parse_hex_address(params.get("address"))
+        .ok_or_else(|| JsonRpcResponse::err(None, INVALID_PARAMS, "missing or invalid 'address'"))?;
+    state.patch.restore_at(pid, address).map_err(|e| {
+        JsonRpcResponse::err(None, INTERNAL_ERROR, e.to_string())
+    })?;
+    Ok(json!({ "ok": true }))
+}
+
+fn handle_code_list(state: &RpcState) -> MethodResult {
+    Ok(json!(state.patch.list()))
+}
+
+// ─── Helpers ────────────────────────────────────────────────────────────────
 
 /// Parse a hex address string like "0x7f2012340000" or "7f2012340000".
 fn parse_hex_address(value: Option<&serde_json::Value>) -> Option<u64> {
