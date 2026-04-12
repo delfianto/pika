@@ -1,4 +1,4 @@
-use crate::scan::candidate::{Candidate, TypeFlags, ValueType, encode_value_patterns};
+use crate::scan::candidate::{Candidate, TypeFlags, ValuePattern, ValueType, encode_value_patterns};
 use crate::mem::access::MemoryAccess;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -148,25 +148,47 @@ pub fn filter_candidates(
 }
 
 /// Check if current bytes match any encoded pattern (for Exact mode).
+/// F32 epsilon for filter comparison (matches the scan engine constant).
+const F32_FILTER_EPSILON: f32 = 0.001;
+
 fn check_exact_match(
     current: &[u8; 8],
-    patterns: &[([u8; 8], TypeFlags, usize)],
+    patterns: &[ValuePattern],
     candidate_types: TypeFlags,
 ) -> bool {
-    patterns.iter().any(|(pat_bytes, pat_flags, pat_size)| {
-        pat_flags.intersects(candidate_types) && current[..*pat_size] == pat_bytes[..*pat_size]
+    patterns.iter().any(|(pat_bytes, pat_flags, pat_size, use_epsilon)| {
+        if !pat_flags.intersects(candidate_types) {
+            return false;
+        }
+        if *use_epsilon && *pat_size == 4 {
+            let target = f32::from_le_bytes(pat_bytes[..4].try_into().unwrap());
+            let current_val = f32::from_le_bytes(current[..4].try_into().unwrap());
+            current_val.is_finite() && (current_val - target).abs() <= F32_FILTER_EPSILON
+        } else {
+            current[..*pat_size] == pat_bytes[..*pat_size]
+        }
     })
 }
 
 /// Narrow candidate types to only those whose pattern matched.
 fn narrow_types(
     current: &[u8; 8],
-    patterns: &[([u8; 8], TypeFlags, usize)],
+    patterns: &[ValuePattern],
     candidate_types: TypeFlags,
 ) -> TypeFlags {
     let mut matched = TypeFlags::empty();
-    for (pat_bytes, pat_flags, pat_size) in patterns {
-        if pat_flags.intersects(candidate_types) && current[..*pat_size] == pat_bytes[..*pat_size] {
+    for (pat_bytes, pat_flags, pat_size, use_epsilon) in patterns {
+        if !pat_flags.intersects(candidate_types) {
+            continue;
+        }
+        let is_match = if *use_epsilon && *pat_size == 4 {
+            let target = f32::from_le_bytes(pat_bytes[..4].try_into().unwrap());
+            let current_val = f32::from_le_bytes(current[..4].try_into().unwrap());
+            current_val.is_finite() && (current_val - target).abs() <= F32_FILTER_EPSILON
+        } else {
+            current[..*pat_size] == pat_bytes[..*pat_size]
+        };
+        if is_match {
             matched |= *pat_flags & candidate_types;
         }
     }

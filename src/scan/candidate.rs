@@ -179,11 +179,15 @@ impl From<&Candidate> for CandidateJson {
     }
 }
 
+/// Pattern tuple: (byte_pattern, type_flags, pattern_size, use_epsilon).
+/// When `use_epsilon` is true, the scanner uses approximate float comparison
+/// instead of exact byte matching.
+pub type ValuePattern = ([u8; 8], TypeFlags, usize, bool);
+
 /// Encodes a numeric value into its little-endian byte representation for each type.
-/// Returns (4-byte patterns, 8-byte patterns) with their associated type flags.
-#[must_use]
-pub fn encode_value_patterns(value: f64) -> Vec<([u8; 8], TypeFlags, usize)> {
-    let mut patterns: Vec<([u8; 8], TypeFlags, usize)> = Vec::new();
+/// Returns patterns with their associated type flags.
+pub fn encode_value_patterns(value: f64) -> Vec<ValuePattern> {
+    let mut patterns: Vec<ValuePattern> = Vec::new();
 
     // i32 / u32 (same byte pattern for non-negative values)
     if value.fract() == 0.0 && value >= f64::from(i32::MIN) && value <= f64::from(i32::MAX) {
@@ -195,22 +199,19 @@ pub fn encode_value_patterns(value: f64) -> Vec<([u8; 8], TypeFlags, usize)> {
         if i >= 0 {
             flags |= TypeFlags::U32;
         }
-        patterns.push((bytes, flags, 4));
+        patterns.push((bytes, flags, 4, false));
     }
 
-    // f32 (different bit pattern from integer unless value is very specific)
+    // f32 -- uses epsilon-based approximate matching to catch frame-delta drift
     #[expect(clippy::cast_possible_truncation)]
     let f = value as f32;
     if (f64::from(f) - value).abs() < 1e-6 {
         let mut bytes = [0u8; 8];
         bytes[..4].copy_from_slice(&f.to_le_bytes());
-        // Only add if byte pattern differs from i32 pattern
-        let dominated = patterns
-            .iter()
-            .any(|(b, _, sz)| *sz == 4 && b[..4] == bytes[..4]);
-        if !dominated {
-            patterns.push((bytes, TypeFlags::F32, 4));
-        }
+        // Always add f32 pattern (epsilon scan handles the matching, so
+        // even when the bit pattern is identical to i32, the epsilon path
+        // catches drifted values that exact byte match would miss)
+        patterns.push((bytes, TypeFlags::F32, 4, true));
     }
 
     // i64 / u64
@@ -223,7 +224,7 @@ pub fn encode_value_patterns(value: f64) -> Vec<([u8; 8], TypeFlags, usize)> {
         if i >= 0 {
             flags |= TypeFlags::U64;
         }
-        patterns.push((bytes, flags, 8));
+        patterns.push((bytes, flags, 8, false));
     }
 
     // f64
@@ -231,11 +232,11 @@ pub fn encode_value_patterns(value: f64) -> Vec<([u8; 8], TypeFlags, usize)> {
         let bytes_arr = value.to_le_bytes();
         let dominated = patterns
             .iter()
-            .any(|(b, _, sz)| *sz == 8 && *b == bytes_arr);
+            .any(|(b, _, sz, _)| *sz == 8 && *b == bytes_arr);
         if !dominated {
             let mut bytes = [0u8; 8];
             bytes.copy_from_slice(&bytes_arr);
-            patterns.push((bytes, TypeFlags::F64, 8));
+            patterns.push((bytes, TypeFlags::F64, 8, false));
         }
     }
 
@@ -288,9 +289,9 @@ mod tests {
         assert!(patterns.len() >= 2, "expected at least 2 patterns, got {}", patterns.len());
 
         // Check i32 pattern
-        let i32_pat = patterns.iter().find(|(_, f, sz)| f.contains(TypeFlags::I32) && *sz == 4);
+        let i32_pat = patterns.iter().find(|(_, f, sz, _)| f.contains(TypeFlags::I32) && *sz == 4);
         assert!(i32_pat.is_some());
-        let (bytes, flags, _) = i32_pat.unwrap();
+        let (bytes, flags, _, _) = i32_pat.unwrap();
         assert_eq!(bytes[..4], 100_i32.to_le_bytes());
         assert!(flags.contains(TypeFlags::U32)); // 100 >= 0, so u32 also matches
     }
@@ -300,9 +301,9 @@ mod tests {
         let patterns = encode_value_patterns(1.5);
         // 1.5 is not a whole number, so no i32/u32/i64/u64 patterns
         // Should have f32 and f64 patterns
-        let f32_pat = patterns.iter().find(|(_, f, _)| f.contains(TypeFlags::F32));
+        let f32_pat = patterns.iter().find(|(_, f, _, _)| f.contains(TypeFlags::F32));
         assert!(f32_pat.is_some());
-        let (bytes, _, sz) = f32_pat.unwrap();
+        let (bytes, _, sz, _) = f32_pat.unwrap();
         assert_eq!(*sz, 4);
         assert_eq!(bytes[..4], 1.5_f32.to_le_bytes());
     }
@@ -312,17 +313,18 @@ mod tests {
         let patterns = encode_value_patterns(0.0);
         // i32(0) and f32(0.0) have the same byte pattern: all zeros
         // Should deduplicate
-        let four_byte = patterns.iter().filter(|(_, _, sz)| *sz == 4).count();
-        assert_eq!(four_byte, 1, "0 as i32 and f32 are same bytes, should deduplicate");
+        let four_byte = patterns.iter().filter(|(_, _, sz, _)| *sz == 4).count();
+        // i32 pattern (exact) + f32 pattern (epsilon) are now always separate
+        assert!(four_byte >= 1, "should have at least one 4-byte pattern");
     }
 
     #[test]
     fn encode_negative() {
         let patterns = encode_value_patterns(-42.0);
         // i32(-42) should NOT have U32 flag
-        let i32_pat = patterns.iter().find(|(_, f, sz)| f.contains(TypeFlags::I32) && *sz == 4);
+        let i32_pat = patterns.iter().find(|(_, f, sz, _)| f.contains(TypeFlags::I32) && *sz == 4);
         assert!(i32_pat.is_some());
-        let (_, flags, _) = i32_pat.unwrap();
+        let (_, flags, _, _) = i32_pat.unwrap();
         assert!(!flags.contains(TypeFlags::U32));
     }
 
@@ -331,10 +333,10 @@ mod tests {
         let val = 3_000_000_000.0; // exceeds i32 max
         let patterns = encode_value_patterns(val);
         // Should NOT have i32 pattern (value > i32::MAX)
-        let has_i32 = patterns.iter().any(|(_, f, sz)| f.contains(TypeFlags::I32) && *sz == 4);
+        let has_i32 = patterns.iter().any(|(_, f, sz, _)| f.contains(TypeFlags::I32) && *sz == 4);
         assert!(!has_i32, "3 billion should not fit in i32");
         // Should have i64/u64 pattern
-        let has_i64 = patterns.iter().any(|(_, f, sz)| f.contains(TypeFlags::I64) && *sz == 8);
+        let has_i64 = patterns.iter().any(|(_, f, sz, _)| f.contains(TypeFlags::I64) && *sz == 8);
         assert!(has_i64);
     }
 

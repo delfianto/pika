@@ -1,13 +1,21 @@
-use crate::scan::candidate::{Candidate, TypeFlags, ValueType, encode_value_patterns};
+use crate::scan::candidate::{Candidate, ValuePattern, ValueType, encode_value_patterns};
+#[cfg(test)]
+use crate::scan::candidate::TypeFlags;
 use crate::process::maps::{MapRegion, RegionSafety};
 use crate::mem::access::MemoryAccess;
 use anyhow::Result;
 use dashmap::DashMap;
 use rayon::prelude::*;
 use nid::Nanoid;
+use std::cell::RefCell;
 
 /// Default chunk size for `process_vm_readv` calls (4 MB).
 const DEFAULT_CHUNK_SIZE: usize = 4 * 1024 * 1024;
+
+thread_local! {
+    /// Per-thread reusable buffer for value scans, avoiding per-region heap allocation.
+    static SCAN_BUFFER: RefCell<Vec<u8>> = RefCell::new(vec![0u8; DEFAULT_CHUNK_SIZE]);
+}
 
 /// A scan session tracks candidates across multiple scan/filter passes.
 pub struct ScanSession {
@@ -130,7 +138,7 @@ pub fn first_scan(
         let flag = dtype.to_flag();
         patterns
             .into_iter()
-            .filter(|(_, f, _)| f.intersects(flag))
+            .filter(|(_, f, _, _)| f.intersects(flag))
             .collect()
     };
 
@@ -174,11 +182,12 @@ pub fn first_scan(
 }
 
 /// Scan a single memory region for value patterns.
+/// Uses a thread-local buffer to avoid per-region heap allocation.
 fn scan_region(
     mem: &dyn MemoryAccess,
     pid: u32,
     region: &MapRegion,
-    patterns: &[([u8; 8], TypeFlags, usize)],
+    patterns: &[ValuePattern],
 ) -> Result<Vec<Candidate>> {
     let size = region.size() as usize;
     let chunk_size = if size <= DEFAULT_CHUNK_SIZE {
@@ -187,8 +196,34 @@ fn scan_region(
         DEFAULT_CHUNK_SIZE
     };
 
+    SCAN_BUFFER.with(|cell| {
+        match cell.try_borrow_mut() {
+            Ok(mut buffer) => {
+                if buffer.len() < chunk_size {
+                    buffer.resize(chunk_size, 0);
+                }
+                scan_region_inner(mem, pid, region, patterns, size, chunk_size, &mut buffer)
+            }
+            Err(_) => {
+                // Fallback: allocate a fresh buffer (shouldn't happen with Rayon)
+                let mut buffer = vec![0u8; chunk_size];
+                scan_region_inner(mem, pid, region, patterns, size, chunk_size, &mut buffer)
+            }
+        }
+    })
+}
+
+/// Inner scan loop operating on a borrowed buffer.
+fn scan_region_inner(
+    mem: &dyn MemoryAccess,
+    pid: u32,
+    region: &MapRegion,
+    patterns: &[ValuePattern],
+    size: usize,
+    chunk_size: usize,
+    buffer: &mut [u8],
+) -> Result<Vec<Candidate>> {
     let mut candidates = Vec::new();
-    let mut buffer = vec![0u8; chunk_size];
     let mut offset = 0usize;
 
     while offset < size {
@@ -204,8 +239,15 @@ fn scan_region(
         }
 
         // Search this chunk for all patterns
-        for &(ref pattern, flags, pat_size) in patterns {
-            let hits = scan_buffer_for_pattern(&buffer[..bytes_read], &pattern[..pat_size], pat_size);
+        for &(ref pattern, flags, pat_size, use_epsilon) in patterns {
+            let hits = if use_epsilon && pat_size == 4 {
+                let target = f32::from_le_bytes(
+                    pattern[..4].try_into().expect("4 bytes for f32"),
+                );
+                scan_f32_epsilon(&buffer[..bytes_read], target, F32_EPSILON, pat_size)
+            } else {
+                scan_buffer_for_pattern(&buffer[..bytes_read], &pattern[..pat_size], pat_size)
+            };
             for buf_offset in hits {
                 // Copy up to 8 bytes at the match position for last_value snapshot
                 let mut last_value = [0u8; 8];
@@ -438,6 +480,114 @@ unsafe fn scan_4byte_sse2(buffer: &[u8], needle: u32, alignment: usize) -> Vec<u
     results
 }
 
+// ─── Float epsilon scanning ──────────────────────────────────────────────────
+
+/// Absolute tolerance for f32 approximate matching.
+/// 0.001 catches frame-delta drift (99.999 vs 100.0) without false positives.
+const F32_EPSILON: f32 = 0.001;
+
+/// Scan for f32 values within epsilon tolerance.
+/// Returns offsets where `|buffer_value - target| <= epsilon` and the value is finite.
+fn scan_f32_epsilon(buffer: &[u8], target: f32, epsilon: f32, alignment: usize) -> Vec<usize> {
+    #[cfg(target_arch = "x86_64")]
+    {
+        if is_x86_feature_detected!("avx2") {
+            // SAFETY: AVX2 confirmed available by runtime check
+            return unsafe { scan_f32_epsilon_avx2(buffer, target, epsilon, alignment) };
+        }
+    }
+    scan_f32_epsilon_scalar(buffer, target, epsilon, alignment)
+}
+
+/// Scalar f32 epsilon scan (fallback for non-x86 or when AVX2 is unavailable).
+fn scan_f32_epsilon_scalar(
+    buffer: &[u8],
+    target: f32,
+    epsilon: f32,
+    alignment: usize,
+) -> Vec<usize> {
+    let mut results = Vec::new();
+    let mut offset = 0;
+    while offset + 4 <= buffer.len() {
+        if offset % alignment == 0 {
+            let val = f32::from_le_bytes(
+                buffer[offset..offset + 4]
+                    .try_into()
+                    .expect("slice length is 4"),
+            );
+            if val.is_finite() && (val - target).abs() <= epsilon {
+                results.push(offset);
+            }
+        }
+        offset += alignment;
+    }
+    results
+}
+
+/// AVX2 f32 epsilon scan: processes 8 floats (32 bytes) per iteration.
+/// Uses `|chunk - target| <= epsilon` with SIMD abs via sign-bit masking.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn scan_f32_epsilon_avx2(
+    buffer: &[u8],
+    target: f32,
+    epsilon: f32,
+    alignment: usize,
+) -> Vec<usize> {
+    let target_vec = _mm256_set1_ps(target);
+    let eps_vec = _mm256_set1_ps(epsilon);
+    // Sign-bit mask for abs: andnot with -0.0 clears the sign bit
+    let sign_mask = _mm256_set1_ps(-0.0_f32);
+
+    let mut results = Vec::new();
+    let len = buffer.len();
+    if len < 32 {
+        return scan_f32_epsilon_scalar(buffer, target, epsilon, alignment);
+    }
+
+    let ptr = buffer.as_ptr();
+    let end = len.saturating_sub(31);
+    let mut offset = 0;
+
+    while offset < end {
+        // SAFETY: offset + 32 <= len checked by loop condition
+        let chunk = _mm256_loadu_ps(ptr.add(offset).cast::<f32>());
+        let diff = _mm256_sub_ps(chunk, target_vec);
+        let abs_diff = _mm256_andnot_ps(sign_mask, diff);
+        let within = _mm256_cmp_ps::<_CMP_LE_OQ>(abs_diff, eps_vec);
+        let mask = _mm256_movemask_ps(within) as u32;
+
+        if mask != 0 {
+            for lane in 0..8u32 {
+                if mask & (1 << lane) != 0 {
+                    let candidate_offset = offset + (lane as usize) * 4;
+                    if candidate_offset % alignment == 0 {
+                        results.push(candidate_offset);
+                    }
+                }
+            }
+        }
+        offset += 32;
+    }
+
+    // Scalar tail
+    while offset + 4 <= len {
+        if offset % alignment == 0 {
+            let val = f32::from_le_bytes(
+                buffer[offset..offset + 4]
+                    .try_into()
+                    .expect("4 bytes"),
+            );
+            if val.is_finite() && (val - target).abs() <= epsilon {
+                results.push(offset);
+            }
+        }
+        offset += alignment;
+    }
+
+    results
+}
+
 // ─── AOB / Signature scanning ────────────────────────────────────────────────
 
 /// Parse an AOB pattern string like "48 89 5C 24 ?? 57" into a byte pattern.
@@ -495,11 +645,8 @@ pub fn aob_scan(
 
     let aob_start = std::time::Instant::now();
 
-    // Find the first non-wildcard byte for memchr anchoring
-    let anchor = pattern
-        .iter()
-        .enumerate()
-        .find(|(_, b)| b.is_some());
+    // Pick the rarest non-wildcard byte as memchr anchor.
+    let anchor = pick_aob_anchor(pattern);
 
     let results: Vec<u64> = scan_regions
         .par_iter()
@@ -526,7 +673,7 @@ fn aob_scan_region(
     pid: u32,
     region: &MapRegion,
     pattern: &[Option<u8>],
-    anchor: Option<(usize, &Option<u8>)>,
+    anchor: Option<(usize, u8)>,
 ) -> Result<Vec<u64>> {
     aob_scan_region_chunked(mem, pid, region, pattern, anchor, DEFAULT_CHUNK_SIZE)
 }
@@ -537,7 +684,7 @@ fn aob_scan_region_chunked(
     pid: u32,
     region: &MapRegion,
     pattern: &[Option<u8>],
-    anchor: Option<(usize, &Option<u8>)>,
+    anchor: Option<(usize, u8)>,
     max_chunk: usize,
 ) -> Result<Vec<u64>> {
     let size = region.size() as usize;
@@ -548,11 +695,39 @@ fn aob_scan_region_chunked(
 
     let chunk_size = if size <= max_chunk { size } else { max_chunk };
 
+    SCAN_BUFFER.with(|cell| {
+        match cell.try_borrow_mut() {
+            Ok(mut buffer) => {
+                if buffer.len() < chunk_size {
+                    buffer.resize(chunk_size, 0);
+                }
+                aob_scan_region_inner(mem, pid, region, pattern, anchor, size, pat_len, chunk_size, &mut buffer)
+            }
+            Err(_) => {
+                let mut buffer = vec![0u8; chunk_size];
+                aob_scan_region_inner(mem, pid, region, pattern, anchor, size, pat_len, chunk_size, &mut buffer)
+            }
+        }
+    })
+}
+
+/// Inner AOB scan loop operating on a borrowed buffer.
+#[allow(clippy::too_many_arguments)]
+fn aob_scan_region_inner(
+    mem: &dyn MemoryAccess,
+    pid: u32,
+    region: &MapRegion,
+    pattern: &[Option<u8>],
+    anchor: Option<(usize, u8)>,
+    size: usize,
+    pat_len: usize,
+    chunk_size: usize,
+    buffer: &mut [u8],
+) -> Result<Vec<u64>> {
     let overlap = pat_len - 1;
     let mut results = Vec::new();
-    let mut buffer = vec![0u8; chunk_size];
-    let mut offset = 0usize; // tracks how far into the region the *next read* starts
-    let mut prefix_len = 0usize; // carried-over bytes at buffer[0..prefix_len]
+    let mut offset = 0usize;
+    let mut prefix_len = 0usize;
 
     while offset < size {
         let max_new = chunk_size - prefix_len;
@@ -568,21 +743,18 @@ fn aob_scan_region_chunked(
             break;
         }
 
-        // base_address maps buffer[0] back to the process address space
         let base_address = region.start + (offset as u64) - (prefix_len as u64);
 
-        // Use anchor byte with memchr for fast skipping, or linear scan if all wildcards
         let buf = &buffer[..total];
         match anchor {
-            Some((anchor_offset, Some(anchor_byte))) => {
+            Some((anchor_offset, anchor_byte)) => {
                 let mut pos = 0;
                 while pos + pat_len <= buf.len() {
-                    // Find next occurrence of the anchor byte
                     let search_start = pos + anchor_offset;
                     if search_start >= buf.len() {
                         break;
                     }
-                    match memchr::memchr(*anchor_byte, &buf[search_start..]) {
+                    match memchr::memchr(anchor_byte, &buf[search_start..]) {
                         Some(found) => {
                             let candidate_start = search_start + found - anchor_offset;
                             if candidate_start + pat_len <= buf.len()
@@ -596,8 +768,7 @@ fn aob_scan_region_chunked(
                     }
                 }
             }
-            _ => {
-                // No anchor (all wildcards) -- linear scan
+            None => {
                 for pos in 0..=buf.len() - pat_len {
                     if aob_matches(&buf[pos..pos + pat_len], pattern) {
                         results.push(base_address + pos as u64);
@@ -606,10 +777,8 @@ fn aob_scan_region_chunked(
             }
         }
 
-        // Advance offset by the new bytes we actually consumed
         offset += bytes_read;
 
-        // Carry over the last `overlap` bytes for the next iteration
         if offset < size && total >= overlap {
             buffer.copy_within(total - overlap..total, 0);
             prefix_len = overlap;
@@ -618,11 +787,32 @@ fn aob_scan_region_chunked(
         }
 
         if bytes_read < read_len {
-            break; // Partial read, rest of region is unmapped
+            break;
         }
     }
 
     Ok(results)
+}
+
+/// Pick the best anchor byte for memchr in an AOB pattern.
+///
+/// Prefers rare bytes (instruction prefixes, high-nibble values) over common
+/// ones (0x00, 0xFF) to minimize false hits during memchr scanning.
+fn pick_aob_anchor(pattern: &[Option<u8>]) -> Option<(usize, u8)> {
+    fn byte_rarity(b: u8) -> u8 {
+        match b {
+            0x00 | 0xFF => 0,
+            0x01..=0x0F | 0xF0..=0xFE => 1,
+            0x20..=0x7E => 2,
+            _ => 3,
+        }
+    }
+
+    pattern
+        .iter()
+        .enumerate()
+        .filter_map(|(i, b)| b.map(|byte| (i, byte)))
+        .max_by_key(|&(_, byte)| byte_rarity(byte))
 }
 
 /// Check if a byte slice matches an AOB pattern (with wildcards).
@@ -1016,11 +1206,44 @@ mod tests {
         };
 
         let pattern = parse_aob_pattern("AA BB CC DD EE").unwrap();
-        let anchor = pattern.iter().enumerate().find(|(_, b)| b.is_some());
+        let anchor = pick_aob_anchor(&pattern);
         let results = aob_scan_region_chunked(&mock, 1, &region, &pattern, anchor, 32).unwrap();
 
         assert_eq!(results.len(), 2, "should find both the in-chunk and boundary-spanning match");
         assert!(results.contains(&(0x5000 + 10)), "should find match at offset 10");
         assert!(results.contains(&(0x5000 + 30)), "should find match at offset 30 (spans chunk boundary)");
+    }
+
+    #[test]
+    fn pick_aob_anchor_avoids_zero() {
+        let pattern = parse_aob_pattern("00 00 ?? 48 89").unwrap();
+        let anchor = pick_aob_anchor(&pattern);
+        // Should pick 0x48 or 0x89 (rarity=3), NOT 0x00 (rarity=0)
+        assert!(anchor.is_some());
+        let (_, byte) = anchor.unwrap();
+        assert!(byte == 0x48 || byte == 0x89, "anchor should be a rare byte, got {byte:#x}");
+    }
+
+    #[test]
+    fn pick_aob_anchor_avoids_ff() {
+        let pattern = parse_aob_pattern("FF ?? 90").unwrap();
+        let anchor = pick_aob_anchor(&pattern);
+        assert_eq!(anchor, Some((2, 0x90)), "should prefer 0x90 over 0xFF");
+    }
+
+    #[test]
+    fn pick_aob_anchor_all_wildcards() {
+        let pattern = parse_aob_pattern("?? ??").unwrap();
+        assert_eq!(pick_aob_anchor(&pattern), None);
+    }
+
+    #[test]
+    fn pick_aob_anchor_all_literal() {
+        let pattern = parse_aob_pattern("48 89 5C").unwrap();
+        let anchor = pick_aob_anchor(&pattern);
+        assert!(anchor.is_some());
+        // All are rarity=3, any is valid -- just verify it's one of them
+        let (idx, byte) = anchor.unwrap();
+        assert!(pattern[idx] == Some(byte));
     }
 }
