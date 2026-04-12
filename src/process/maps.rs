@@ -1,3 +1,13 @@
+//! `/proc/[pid]/maps` parser and region safety classifier.
+//!
+//! Parses the Linux procfs maps format into structured [`MapRegion`] entries and
+//! classifies each region's safety level for scanning and writing. The classifier
+//! implements a priority-ordered rule set that identifies GPU driver mappings,
+//! Wine/Proton system memory, and DXVK translation layer regions to prevent
+//! accidental writes that could crash the game or deadlock the GPU.
+//!
+//! See the [module-level documentation](super) for the full classification rule set.
+
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
@@ -16,11 +26,13 @@ pub enum RegionSafety {
 }
 
 impl RegionSafety {
+    /// Returns `true` if this region is safe to scan (read memory from).
     #[must_use]
     pub const fn can_scan(self) -> bool {
         matches!(self, Self::Safe | Self::ReadOnly | Self::Risky)
     }
 
+    /// Returns `true` if this region is safe to write values to.
     #[must_use]
     pub const fn can_write(self) -> bool {
         matches!(self, Self::Safe)

@@ -1,3 +1,11 @@
+//! JSON-RPC client for communicating with the pika daemon.
+//!
+//! [`RpcClient`] connects to the daemon's Unix socket, sends a single JSON-RPC 2.0
+//! request, and reads back the response. Each CLI subcommand that requires the
+//! daemon (scan, filter, freeze, write, etc.) creates a fresh connection — the
+//! protocol is stateless at the transport level (state lives in the daemon's
+//! [`super::methods::RpcState`]).
+
 use crate::rpc::types::{JsonRpcRequest, JsonRpcResponse};
 use anyhow::{Context, Result};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -9,6 +17,7 @@ pub struct RpcClient {
 }
 
 impl RpcClient {
+    /// Create a new client targeting the daemon at the given socket path.
     pub fn new(socket_path: &str) -> Self {
         Self {
             socket_path: socket_path.to_string(),

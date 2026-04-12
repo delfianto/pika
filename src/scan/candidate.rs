@@ -1,3 +1,15 @@
+//! Candidate addresses and value type tracking for memory scans.
+//!
+//! A [`Candidate`] represents a memory address that matched a scan, along with
+//! metadata about which data type interpretations remain valid. The multi-type
+//! tracking via [`TypeFlags`] allows pika to search for all plausible types
+//! simultaneously and narrow across filter passes without forcing the user to
+//! guess the encoding up front.
+//!
+//! [`ValueType`] is used for explicit type selection in write and freeze operations,
+//! while [`encode_value_patterns`] converts a numeric value into all plausible
+//! little-endian byte patterns for scanning.
+
 use bitflags::bitflags;
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -107,6 +119,7 @@ pub struct Candidate {
 }
 
 impl Candidate {
+    /// Create a candidate with the given address and type flags, zero-initialized value.
     #[must_use]
     pub const fn new(address: u64, types: TypeFlags) -> Self {
         Self {

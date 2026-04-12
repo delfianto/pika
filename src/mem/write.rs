@@ -1,3 +1,16 @@
+//! Safe value writing with mandatory pre-flight region checks.
+//!
+//! This module is the **only** path through which game memory values should be
+//! modified. Before every write, [`write_value`] re-reads `/proc/[pid]/maps` and
+//! verifies that the target address is still in a
+//! [`Safe`](crate::process::maps::RegionSafety::Safe) region. This is essential
+//! because DXVK can remap memory regions between a scan and a subsequent write —
+//! a stale safety classification could allow writing into a GPU driver buffer.
+//!
+//! The function handles encoding the numeric value into the correct little-endian
+//! byte representation for the requested data type before writing via
+//! [`MemoryAccess::write`].
+
 use crate::scan::candidate::ValueType;
 use crate::process::maps::RegionSafety;
 use crate::mem::access::MemoryAccess;

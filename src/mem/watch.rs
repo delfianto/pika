@@ -1,3 +1,24 @@
+//! Hardware watchpoints via x86-64 debug registers.
+//!
+//! Uses `PTRACE_SEIZE` + `PTRACE_INTERRUPT` to set hardware watchpoints on target
+//! process addresses without sending `SIGSTOP`. This is critical for Wine/Proton
+//! games where stopping the process can deadlock DXVK/VKD3D GPU submission.
+//!
+//! # How it works
+//!
+//! 1. A thread is spawned per watchpoint, which calls `PTRACE_SEIZE` on a target
+//!    thread (preferring a non-main thread to minimize disruption).
+//! 2. `PTRACE_INTERRUPT` briefly pauses the thread to configure debug registers
+//!    (`DR0` = address, `DR7` = mode/size, `DR6` = clear).
+//! 3. The thread is resumed with `PTRACE_CONT`. The CPU triggers `SIGTRAP` on
+//!    hardware watchpoint hits.
+//! 4. The watch loop uses `waitpid(WNOHANG)` to poll for hits without blocking.
+//!    Hits are deduplicated by instruction pointer (`RIP`) and optionally include
+//!    a full register snapshot.
+//! 5. On stop, debug registers are cleared and the tracer detaches cleanly.
+//!
+//! On non-Linux platforms, all watch operations return an error.
+
 use crate::mem::access::MemoryAccess;
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
@@ -27,6 +48,7 @@ pub enum WatchSize {
 }
 
 impl WatchSize {
+    /// Return the size in bytes as a numeric value.
     pub fn as_bytes(self) -> u8 {
         match self {
             Self::Byte1 => 1,
@@ -37,7 +59,10 @@ impl WatchSize {
     }
 }
 
-/// Configuration for a watch session.
+/// Configuration for a hardware watchpoint session.
+///
+/// Specifies the target address, access mode (write-only or read/write),
+/// watched region size, and whether to capture a full register snapshot on hit.
 #[derive(Clone, Debug)]
 pub struct WatchConfig {
     pub pid: u32,
@@ -117,6 +142,7 @@ pub struct WatchManager {
 }
 
 impl WatchManager {
+    /// Create a new watch manager backed by the given memory access implementation.
     pub fn new(mem: Arc<dyn MemoryAccess>) -> Self {
         Self {
             mem,

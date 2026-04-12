@@ -1,3 +1,23 @@
+//! Pointer chain scanner for stable address resolution across game restarts.
+//!
+//! Windows heap addresses in Wine/Proton are randomized by ASLR on every game
+//! launch, so a raw address found by scanning is useless after a restart. This
+//! module implements a BFS-based pointer chain scanner that walks backwards from
+//! a target address through memory, looking for pointer-sized (8-byte) aligned
+//! values that point within a configurable offset of the target.
+//!
+//! When a pointer is found inside a known module (identified by its
+//! `/proc/[pid]/maps` pathname), the chain is recorded as:
+//!
+//! ```text
+//! module_name + base_offset -> [+link_offset] -> [+link_offset] -> target
+//! ```
+//!
+//! Module base addresses are stable within a session (they come from the PE loader),
+//! so the chain can be replayed on the next launch to re-resolve the target address.
+//!
+//! Shorter chains are preferred as they tend to be more stable across game updates.
+
 use crate::process::maps::{MapRegion, RegionSafety};
 use crate::mem::access::MemoryAccess;
 use anyhow::Result;
@@ -21,8 +41,8 @@ pub struct PointerChain {
     pub base_module: String,
     /// Offset from module base to the first pointer.
     pub base_offset: u64,
-    /// Chain of dereferences. Follow: read [module_base + base_offset], add links[0].offset,
-    /// dereference, add links[1].offset, etc.
+    /// Chain of dereferences. Follow: read \[module_base + base_offset\], add links\[0\].offset,
+    /// dereference, add links\[1\].offset, etc.
     pub links: Vec<PointerLink>,
 }
 

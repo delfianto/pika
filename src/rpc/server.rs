@@ -1,3 +1,13 @@
+//! JSON-RPC server over Unix domain sockets or stdio.
+//!
+//! Accepts connections, reads newline-delimited JSON-RPC 2.0 requests, dispatches
+//! them through [`super::methods::dispatch`], and writes back responses. Each
+//! connection is handled by a separate tokio task.
+//!
+//! The server detects stale socket files from previously crashed daemons by
+//! attempting a probe connection — if the connection is refused, the stale file
+//! is removed and the server binds normally.
+
 use crate::mem::access::MemoryAccess;
 use crate::rpc::methods::{RpcState, dispatch};
 use crate::rpc::types::*;

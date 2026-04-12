@@ -1,3 +1,10 @@
+//! Command-line interface definitions for the pika binary.
+//!
+//! Uses [`clap`] derive macros to define the [`Cli`] argument struct and the
+//! [`Command`] subcommand enum. Global flags (`--verbose`, `--socket`, `--json`)
+//! are available to all subcommands. Stateful commands (scan, filter, freeze)
+//! require a running daemon started with `pika serve`.
+
 use clap::{Parser, Subcommand};
 
 /// Default Unix socket path for the pika daemon.

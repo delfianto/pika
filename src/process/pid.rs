@@ -1,3 +1,14 @@
+//! Wine/Proton game process discovery.
+//!
+//! Walks `/proc` to find processes hosted by Wine (identified by their
+//! `/proc/[pid]/exe` symlink pointing to a Wine binary) and extracts the game
+//! `.exe` name from `argv[0]`. Known Wine infrastructure processes (services.exe,
+//! explorer.exe, steam.exe, etc.) are filtered out.
+//!
+//! Only `argv[0]` is examined for `.exe` names — this prevents false positives
+//! from launcher processes (systemd-inhibit, reaper, pressure-vessel, python3)
+//! that pass `.exe` paths as arguments but are not themselves Wine-hosted.
+
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
@@ -50,7 +61,7 @@ pub fn is_wine_binary(exe_path: &str) -> bool {
 }
 
 /// Extract the .exe filename from a cmdline string.
-/// Only considers the FIRST argument (argv[0]) — the actual program being run.
+/// Only considers the FIRST argument (argv\[0\]) — the actual program being run.
 /// This prevents matching `.exe` paths that appear as arguments to launcher processes
 /// like systemd-inhibit, reaper, pressure-vessel, python3, etc.
 #[must_use]

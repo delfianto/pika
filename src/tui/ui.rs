@@ -1,3 +1,9 @@
+//! TUI rendering with ratatui.
+//!
+//! Defines the [`draw`] function that renders the current [`App`]
+//! state to a terminal frame. Currently a placeholder with a title bar, main
+//! content area, and status bar.
+
 use crate::tui::app::App;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout};

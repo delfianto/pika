@@ -1,3 +1,10 @@
+//! TUI application state.
+//!
+//! [`App`] holds the entire state for the terminal user interface: the selected
+//! process, scan candidates, active session, and status messages. The planned
+//! event loop will mutate this state in response to keyboard input and the
+//! [`super::ui::draw`] function will render it each frame.
+
 use crate::scan::candidate::Candidate;
 use crate::process::pid::ProcessInfo;
 
@@ -19,6 +26,7 @@ pub struct App {
 }
 
 impl App {
+    /// Create a new application state with default values.
     #[must_use]
     pub fn new() -> Self {
         Self {

@@ -1,3 +1,9 @@
+//! JSON-RPC 2.0 wire types: request, response, and error structures.
+//!
+//! Defines the serialization format for all messages exchanged between the pika
+//! CLI client and the daemon server. Includes standard JSON-RPC 2.0 error codes
+//! and convenience constructors for building responses.
+
 use serde::{Deserialize, Serialize};
 
 /// JSON-RPC 2.0 request.
@@ -31,11 +37,15 @@ pub struct JsonRpcError {
     pub data: Option<serde_json::Value>,
 }
 
-// Standard JSON-RPC 2.0 error codes
+/// JSON-RPC 2.0 error code: invalid JSON was received by the server.
 pub const PARSE_ERROR: i32 = -32700;
+/// JSON-RPC 2.0 error code: the JSON sent is not a valid request object.
 pub const INVALID_REQUEST: i32 = -32600;
+/// JSON-RPC 2.0 error code: the method does not exist or is not available.
 pub const METHOD_NOT_FOUND: i32 = -32601;
+/// JSON-RPC 2.0 error code: invalid method parameter(s).
 pub const INVALID_PARAMS: i32 = -32602;
+/// JSON-RPC 2.0 error code: internal server error.
 pub const INTERNAL_ERROR: i32 = -32603;
 
 impl JsonRpcResponse {
@@ -63,7 +73,7 @@ impl JsonRpcResponse {
         }
     }
 
-    /// Create a notification (server-initiated, no id).
+    /// Create a notification request (server-initiated, no response expected).
     pub fn notification(method: &str, params: serde_json::Value) -> JsonRpcRequest {
         JsonRpcRequest {
             jsonrpc: "2.0".to_string(),

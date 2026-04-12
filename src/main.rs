@@ -566,6 +566,7 @@ fn run_platform_check() {
     }
 }
 
+/// Print a hex dump with address gutter and ASCII panel, 16 bytes per row.
 fn print_hex_dump(base_addr: u64, data: &[u8]) {
     for (i, chunk) in data.chunks(16).enumerate() {
         let addr = base_addr + (i * 16) as u64;

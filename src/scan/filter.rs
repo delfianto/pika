@@ -1,3 +1,20 @@
+//! Candidate filtering for multi-pass scan narrowing.
+//!
+//! After an initial scan produces thousands of candidate addresses, the user
+//! changes the target value in-game and requests a filter pass. This module
+//! re-reads memory at every candidate address and retains only those that match
+//! the filter criteria.
+//!
+//! Six filter modes are supported:
+//!
+//! - **Exact** / **NotEqual**: Compare current memory against a target value.
+//! - **Increased** / **Decreased**: Compare current memory against the candidate's
+//!   stored `last_value` from the previous pass.
+//! - **Changed** / **Unchanged**: Byte-level comparison against `last_value`.
+//!
+//! For `Exact` mode, candidate types are narrowed to only those whose byte pattern
+//! actually matched, progressively eliminating implausible type interpretations.
+
 use crate::scan::candidate::{Candidate, TypeFlags, ValuePattern, ValueType, encode_value_patterns};
 use crate::mem::access::MemoryAccess;
 use anyhow::Result;

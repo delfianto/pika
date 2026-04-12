@@ -1,3 +1,13 @@
+//! x86-64 disassembly of target process code.
+//!
+//! Reads machine code bytes from a target process via [`MemoryAccess`] and
+//! disassembles them using the [capstone](https://docs.rs/capstone) engine in
+//! Intel syntax. This is used by the watch module to annotate hardware watchpoint
+//! hits with the triggering instruction, and by the patch module to auto-detect
+//! instruction sizes for NOP operations.
+//!
+//! On non-Linux platforms, disassembly is unavailable and returns an error.
+
 use crate::mem::access::MemoryAccess;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};

@@ -1,3 +1,14 @@
+//! JSON-RPC method handlers for all pika daemon operations.
+//!
+//! Each JSON-RPC method (`pid.list`, `scan.start`, `memory.write`, etc.) maps to
+//! a handler function in this module. The [`dispatch`] function routes incoming
+//! requests by method name, offloading CPU-bound operations (scan, filter, AOB,
+//! pointer scan) to the tokio blocking threadpool.
+//!
+//! All handlers share state through [`RpcState`], which holds the memory access
+//! implementation, scan session registry, freeze manager, patch manager, and
+//! watch manager.
+
 use std::fmt::Write as _;
 
 use crate::scan::candidate::{CandidateJson, ValueType};
@@ -24,6 +35,7 @@ pub struct RpcState {
 }
 
 impl RpcState {
+    /// Create a new RPC state with all subsystem managers initialized.
     pub fn new(mem: Arc<dyn MemoryAccess>) -> Self {
         Self {
             sessions: SessionRegistry::new(),

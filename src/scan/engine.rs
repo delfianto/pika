@@ -1,3 +1,26 @@
+//! SIMD-accelerated memory scan engine with session management and AOB support.
+//!
+//! This is the core scanning engine. It reads memory from target processes via
+//! [`MemoryAccess`], searches for value patterns using platform-optimized SIMD
+//! intrinsics (AVX2 / SSE2 on x86-64, scalar fallback elsewhere), and manages
+//! scan sessions for the multi-pass scan-filter workflow.
+//!
+//! # Performance
+//!
+//! - Memory is read in 4 MB chunks via `process_vm_readv` to balance syscall
+//!   overhead against working-set pressure.
+//! - Thread-local reusable buffers avoid per-region heap allocation when rayon
+//!   distributes work across threads.
+//! - Regions are scanned in parallel using rayon's `par_iter`.
+//! - For `f32` values, an epsilon-tolerant scan catches frame-delta drift.
+//!
+//! # AOB scanning
+//!
+//! Array-of-bytes patterns with wildcards (`??`) are supported. A `memchr`-anchored
+//! strategy selects the rarest non-wildcard byte as the search anchor, and a
+//! sliding-window chunked read with overlap ensures patterns spanning chunk
+//! boundaries are found.
+
 use crate::scan::candidate::{Candidate, ValuePattern, ValueType, encode_value_patterns};
 #[cfg(test)]
 use crate::scan::candidate::TypeFlags;
@@ -52,16 +75,19 @@ impl SessionRegistry {
         }
     }
 
+    /// Insert a new scan session into the registry.
     pub fn insert(&self, session: ScanSession) {
         self.sessions.insert(session.id.clone(), session);
     }
 
+    /// Return the candidate count for a session, or `None` if not found.
     pub fn get_candidate_count(&self, session_id: &str) -> Option<usize> {
         self.sessions
             .get(session_id)
             .map(|entry| entry.candidates.len())
     }
 
+    /// Remove and return a session from the registry.
     pub fn remove(&self, session_id: &str) -> Option<ScanSession> {
         self.sessions.remove(session_id).map(|(_, v)| v)
     }

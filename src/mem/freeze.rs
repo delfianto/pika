@@ -1,3 +1,17 @@
+//! Value freeze loops that repeatedly write a value to hold it constant.
+//!
+//! Each frozen address gets a dedicated `std::thread` that periodically calls
+//! [`write_value`]. Using OS threads (not tokio tasks)
+//! ensures the synchronous `process_vm_writev` path does not block the async executor.
+//!
+//! Every write iteration re-runs the full pre-flight region safety check. If the
+//! region is remapped (e.g., by DXVK) or becomes inaccessible, the freeze loop
+//! detects the failure and stops automatically, logging a warning.
+//!
+//! The [`FreezeManager`] coordinates active freeze loops via a [`DashMap`] keyed by
+//! address. Starting a freeze on an already-frozen address atomically stops the old
+//! loop and starts a new one with the updated value and interval.
+
 use crate::scan::candidate::ValueType;
 use crate::mem::access::MemoryAccess;
 use crate::mem::write::write_value;
@@ -41,6 +55,7 @@ struct FreezeHandle {
 }
 
 impl FreezeManager {
+    /// Create a new freeze manager backed by the given memory access implementation.
     pub fn new(mem: Arc<dyn MemoryAccess>) -> Self {
         Self {
             mem,

@@ -1,3 +1,22 @@
+//! Code patching: NOP, arbitrary byte writes, and restore for executable pages.
+//!
+//! Unlike data writes (which use `process_vm_writev` and only target `rw-p` pages),
+//! code patches need to write to executable pages (`r-xp`). This is achieved by
+//! writing through `/proc/pid/mem`, which bypasses page protections without stopping
+//! the target process. Requires same-UID or `CAP_SYS_PTRACE`.
+//!
+//! The [`PatchManager`] maintains a registry of applied patches keyed by address,
+//! storing original bytes for later restoration. All patches are automatically
+//! restored when the manager is dropped (e.g., on daemon shutdown), preventing
+//! permanent corruption of the target's code sections.
+//!
+//! # Safety checks
+//!
+//! Before patching, the internal `validate_code_address` function verifies that:
+//! 1. The target address falls within a mapped region
+//! 2. The region is not classified as [`NeverTouch`](crate::process::maps::RegionSafety::NeverTouch)
+//! 3. The region has execute or write permissions (code or data section)
+
 use crate::mem::access::MemoryAccess;
 use crate::process::maps::RegionSafety;
 use anyhow::Result;
@@ -37,6 +56,7 @@ pub struct PatchManager {
 }
 
 impl PatchManager {
+    /// Create a new patch manager backed by the given memory access implementation.
     pub fn new(mem: Arc<dyn MemoryAccess>) -> Self {
         Self {
             mem,

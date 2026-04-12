@@ -1,3 +1,16 @@
+//! Memory access abstraction over process memory reads and writes.
+//!
+//! The [`MemoryAccess`] trait provides a platform-independent interface for reading
+//! and writing another process's memory and retrieving its memory map. Two
+//! implementations are provided:
+//!
+//! - **`LinuxMemoryAccess`** (Linux only, in the `linux` submodule): Uses `process_vm_readv` /
+//!   `process_vm_writev` for zero-stop memory access and reads maps from
+//!   `/proc/[pid]/maps`.
+//! - **[`MockMemoryAccess`]** (all platforms): An in-memory simulation backed by
+//!   a `BTreeMap` of address ranges. Used for unit testing the scan/filter/write
+//!   pipeline without a live target process.
+
 use anyhow::Result;
 use std::collections::BTreeMap;
 use std::sync::{Arc, RwLock};
@@ -63,7 +76,7 @@ pub mod linux {
 // ─── Mock implementation (available on all platforms) ────────────────────────
 
 /// Simulated process memory for testing.
-/// Stores memory as a map of (base_address -> Vec<u8>) regions,
+/// Stores memory as a map of (base_address -> `Vec<u8>`) regions,
 /// plus a configurable set of map regions for classification testing.
 #[derive(Clone)]
 pub struct MockMemoryAccess {
