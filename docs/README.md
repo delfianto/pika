@@ -51,6 +51,9 @@ Daemon (pika serve)
   |-- process/pid   Wine/Proton process discovery
 ```
 
+Any GUI or TUI frontend is a **separate project** that talks to the daemon via
+JSON-RPC over the Unix socket. Pika itself is the engine and CLI.
+
 ## Module Documentation
 
 | Document | Module | Description |
@@ -59,7 +62,6 @@ Daemon (pika serve)
 | [PROCESS.md](PROCESS.md) | `process` | Wine/Proton process discovery, `/proc/[pid]/maps` parsing, region safety classification, platform checks |
 | [SCAN.md](SCAN.md) | `scan` | SIMD scan engine, candidate model, multi-pass filtering, AOB pattern scanning, pointer chain resolution |
 | [RPC.md](RPC.md) | `rpc` | JSON-RPC 2.0 server/client, method dispatch, session management |
-| [TUI.md](TUI.md) | `tui` | Terminal user interface (planned architecture) |
 
 ## Reference
 

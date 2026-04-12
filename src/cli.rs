@@ -46,9 +46,6 @@ pub enum Command {
         stdio: bool,
     },
 
-    /// Start the interactive TUI (not yet implemented)
-    Tui,
-
     /// List Wine/Proton game processes
     Ps,
 

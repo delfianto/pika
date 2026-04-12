@@ -22,20 +22,21 @@
 //!   filtering, AOB pattern scanning, and pointer chain resolution.
 //! - [`rpc`] — JSON-RPC 2.0 server/client over Unix domain sockets or stdio,
 //!   providing the daemon interface for all stateful operations.
-//! - [`tui`] — Terminal user interface (under construction).
 //!
 //! Additionally, [`cli`] defines the command-line interface via `clap`.
 //!
 //! # Usage modes
 //!
-//! Pika can operate in three modes:
+//! Pika can operate in two modes:
 //!
 //! 1. **Daemon mode** (`pika serve`): Starts a JSON-RPC server on a Unix socket.
 //!    Stateful commands (scan, filter, freeze) require a running daemon.
 //! 2. **CLI mode** (`pika scan`, `pika read`, etc.): Sends JSON-RPC requests to
 //!    a running daemon for stateful operations, or executes locally for read-only
 //!    commands like `pika ps`.
-//! 3. **TUI mode** (`pika tui`): Interactive terminal interface (planned).
+//!
+//! Any GUI or TUI frontend is a separate project that talks to the daemon via
+//! JSON-RPC over the Unix socket.
 //!
 //! # Safety model
 //!
@@ -53,4 +54,3 @@ pub mod mem;
 pub mod process;
 pub mod rpc;
 pub mod scan;
-pub mod tui;

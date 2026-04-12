@@ -41,11 +41,6 @@ async fn main() -> Result<()> {
             }
         }
 
-        Command::Tui => {
-            let mem = create_memory_access();
-            pika::tui::run(mem)?;
-        }
-
         // ── Local-only commands (no daemon needed) ──────────────────────
         Command::Ps => {
             let processes = pika::process::pid::list_wine_processes()?;
