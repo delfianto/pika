@@ -16,6 +16,8 @@ which read and write another process's memory without stopping it at all.
 - Value freezing with configurable write interval
 - AOB/signature scanning with wildcard patterns
 - Pointer chain discovery (BFS)
+- Hardware watchpoints via x86-64 debug registers
+- Code patching (NOP, arbitrary bytes) with backup/restore
 - Disassembly via capstone
 - Daemon/client architecture — CLI commands route through a persistent server
 - JSON-RPC 2.0 protocol for integration with external tools
@@ -153,6 +155,14 @@ pika read <pid> <addr>            Hex dump memory
 pika disasm <pid> <addr>          Disassemble instructions
 pika aob <pid> "48 89 ?? 24"      Byte pattern scan with wildcards
 pika pointer-scan <pid> <addr>    Find pointer chains to an address
+pika watch <pid> <addr>           Set hardware watchpoint (--mode write|access)
+pika watch-hits <watch-id>        Show watchpoint hits
+pika watch-stop <watch-id>        Remove watchpoint
+pika watch-list                   List active watchpoints
+pika nop <pid> <addr>             NOP an instruction
+pika patch <pid> <addr> "90 90"   Write arbitrary bytes to code
+pika restore <pid> <addr>         Restore original bytes
+pika patch-list                   List active code patches
 ```
 
 Global flags: `--verbose`, `--json`, `--socket <path>`
@@ -165,18 +175,54 @@ Global flags: `--verbose`, `--json`, `--socket <path>`
 - All `rw-s` (shared) mappings are classified `NeverTouch` — no exceptions
 - Pre-flight re-classification before every write (DXVK can remap regions dynamically)
 - `write-all` / `freeze-all` refuse to operate on more than 16 addresses without `--force`
+- Code patches auto-restore on daemon shutdown
 
 ## Architecture
+
+Pika is a dedicated scanning engine with a lightweight CLI. Any GUI or TUI frontend
+is a separate project that talks to the daemon via JSON-RPC over the Unix socket.
 
 ```
 CLI commands ──> Unix socket ──> pika serve (daemon)
                                   ├── scan engine (rayon + SIMD)
-                                  ├── region classifier (maps.rs)
+                                  ├── region classifier
                                   ├── write engine (pre-flight safety)
-                                  ├── freeze threads (std::thread per address)
+                                  ├── freeze manager (std::thread per address)
+                                  ├── patch manager (/proc/pid/mem)
+                                  ├── watch manager (debug registers)
                                   └── process_vm_readv / process_vm_writev
                                         (no SIGSTOP, no ptrace)
 ```
+
+For detailed technical design documentation:
+
+| Document | Covers |
+|---|---|
+| [docs/README.md](docs/README.md) | Project goals, architecture overview, and documentation index |
+| [docs/MEM.md](docs/MEM.md) | MemoryAccess trait, safe writing, freeze loops, code patching, hardware watchpoints |
+| [docs/PROCESS.md](docs/PROCESS.md) | Wine process discovery, `/proc/[pid]/maps` parsing, region safety classification |
+| [docs/SCAN.md](docs/SCAN.md) | SIMD scan engine, candidate model, multi-pass filtering, AOB scanning, pointer chains |
+| [docs/RPC.md](docs/RPC.md) | JSON-RPC 2.0 protocol, server architecture, method catalog |
+| [docs/ANALYSIS.md](docs/ANALYSIS.md) | Deep research: kernel primitives, GPU safety, Wine internals, scan algorithms |
+
+## Disclaimer
+
+This project was written with copious amounts of **Claude Opus 4.6 in MAX thinking
+mode**. Every line of Rust, every doc comment, every SIMD intrinsic — prompted,
+reviewed, iterated, and shipped by a human-AI pair programming session fueled by
+weekend boredom and the primal urge to give yourself 90 grenades in Avowed.
+
+This is a "shit and giggles" weekend project. It does one thing (poke at game memory)
+and tries very hard not to set your GPU on fire in the process.
+
+If the presence of AI-generated code offends your sensibilities, causes you existential
+dread, or makes you want to write a 47-tweet thread about the death of craftsmanship
+— we understand. Please close this tab, step outside, touch some grass, re-evaluate
+the mass of choices that led you to a memory scanner repo on a Saturday afternoon, and
+never return. We wish you well on your journey.
+
+For everyone else: PRs welcome, bug reports appreciated, and if you crash your Wine
+prefix despite all the safety checks, we want to hear about it.
 
 ## License
 
