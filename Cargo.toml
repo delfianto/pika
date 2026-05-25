@@ -1,0 +1,91 @@
+[package]
+name = "pika"
+version = "0.1.0"
+edition = "2024"
+description = "Non-stopping memory scanner for Wine/Proton games"
+license = "GPL-3.0-only"
+rust-version = "1.85"
+
+[[bin]]
+name = "pika"
+path = "src/main.rs"
+
+[dependencies]
+# Error handling
+anyhow = "1"
+thiserror = "2"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Async runtime (RPC server, transport)
+tokio = { version = "1", features = ["full"] }
+
+# Parallelism
+rayon = "1"
+
+# Scanning
+memchr = "2"
+bytemuck = { version = "1", features = ["derive"] }
+bitflags = { version = "2", features = ["serde"] }
+
+# Concurrency
+dashmap = "6"
+
+# Identifiers
+nid = "3"
+
+# TUI
+ratatui = "0.29"
+crossterm = "0.28"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Linux-specific dependencies (only compiled on Linux)
+[target.'cfg(target_os = "linux")'.dependencies]
+nix = { version = "0.29", features = ["process", "uio", "signal", "ptrace", "user"] }
+capstone = "0.13"
+
+[dev-dependencies]
+proptest = "1"
+tempfile = "3"
+tokio-test = "0.4"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+strip = "symbols"
+
+[lints.rust]
+unsafe_op_in_unsafe_fn = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+# Allow common patterns that pedantic flags unnecessarily
+module_name_repetitions = "allow"
+cast_possible_truncation = "allow"
+cast_sign_loss = "allow"
+cast_precision_loss = "allow"
+cast_possible_wrap = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+must_use_candidate = "allow"
+wildcard_imports = "allow"
+redundant_closure_for_method_calls = "allow"
+struct_excessive_bools = "allow"
+result_large_err = "allow"
+trivially_copy_pass_by_ref = "allow"
+case_sensitive_file_extension_comparisons = "allow"
+manual_is_ascii_check = "allow"
+doc_markdown = "allow"
+unnecessary_wraps = "allow"
+single_match_else = "allow"
+too_many_lines = "allow"
+items_after_statements = "allow"
