@@ -11,6 +11,11 @@
       "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
       "groupName": "non-major dependencies",
       "automerge": true
+    },
+    {
+      "description": "Never propose major updates (avoid breaking changes)",
+      "matchUpdateTypes": ["major"],
+      "enabled": false
     }
   ]
 }
