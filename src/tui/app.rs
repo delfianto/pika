@@ -1,5 +1,5 @@
-use crate::scan::candidate::Candidate;
 use crate::process::pid::ProcessInfo;
+use crate::scan::candidate::Candidate;
 
 /// Application state for the TUI.
 #[derive(Debug, Default)]

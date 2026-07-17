@@ -1,5 +1,5 @@
-use crate::process::maps::{MapRegion, RegionSafety};
 use crate::mem::access::MemoryAccess;
+use crate::process::maps::{MapRegion, RegionSafety};
 use anyhow::Result;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -64,8 +64,7 @@ pub fn find_pointer_chains(
     let scannable: Vec<&MapRegion> = regions
         .iter()
         .filter(|r| {
-            r.permissions.read
-                && matches!(r.safety, RegionSafety::Safe | RegionSafety::ReadOnly)
+            r.permissions.read && matches!(r.safety, RegionSafety::Safe | RegionSafety::ReadOnly)
         })
         .collect();
 
@@ -263,8 +262,8 @@ pub fn extract_module_bases(regions: &[MapRegion]) -> Vec<(String, u64, u64)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::process::maps::Permissions;
     use crate::mem::access::MockMemoryAccess;
+    use crate::process::maps::Permissions;
 
     fn rw_perms() -> Permissions {
         Permissions {
@@ -296,21 +295,48 @@ mod tests {
     #[test]
     fn extract_modules_from_maps() {
         let regions = vec![
-            make_region(0x14000_0000, 0x14000_1000, "/path/to/Game.exe", RegionSafety::ReadOnly),
-            make_region(0x14000_1000, 0x14200_0000, "/path/to/Game.exe", RegionSafety::ReadOnly),
-            make_region(0x14200_0000, 0x14280_0000, "/path/to/Game.exe", RegionSafety::ReadOnly),
-            make_region(0x18000_0000, 0x18020_0000, "/path/to/GameLogic.dll", RegionSafety::ReadOnly),
-            make_region(0x7f00_0000, 0x7f00_1000, "/dev/nvidia0", RegionSafety::NeverTouch),
+            make_region(
+                0x0001_4000_0000,
+                0x0001_4000_1000,
+                "/path/to/Game.exe",
+                RegionSafety::ReadOnly,
+            ),
+            make_region(
+                0x0001_4000_1000,
+                0x0001_4200_0000,
+                "/path/to/Game.exe",
+                RegionSafety::ReadOnly,
+            ),
+            make_region(
+                0x0001_4200_0000,
+                0x0001_4280_0000,
+                "/path/to/Game.exe",
+                RegionSafety::ReadOnly,
+            ),
+            make_region(
+                0x0001_8000_0000,
+                0x0001_8020_0000,
+                "/path/to/GameLogic.dll",
+                RegionSafety::ReadOnly,
+            ),
+            make_region(
+                0x7f00_0000,
+                0x7f00_1000,
+                "/dev/nvidia0",
+                RegionSafety::NeverTouch,
+            ),
             make_region(0x1000, 0x2000, "", RegionSafety::Safe),
         ];
 
         let modules = extract_module_bases(&regions);
         assert_eq!(modules.len(), 2);
-        let game = modules.iter().find(|(name, _, _)| name.contains("Game.exe"));
+        let game = modules
+            .iter()
+            .find(|(name, _, _)| name.contains("Game.exe"));
         assert!(game.is_some());
         let (_, start, end) = game.unwrap();
-        assert_eq!(*start, 0x14000_0000);
-        assert_eq!(*end, 0x14280_0000);
+        assert_eq!(*start, 0x0001_4000_0000);
+        assert_eq!(*end, 0x0001_4280_0000);
     }
 
     #[test]
@@ -352,7 +378,7 @@ mod tests {
         let mut module_data = vec![0u8; 0x2000];
         let target_addr: u64 = 0x2000_0500;
         module_data[0x100..0x108].copy_from_slice(&target_addr.to_le_bytes());
-        mock.add_region(0x14000_0000, module_data);
+        mock.add_region(0x0001_4000_0000, module_data);
 
         // Heap region: target value lives here
         let heap_data = vec![0u8; 0x1000];
@@ -360,8 +386,8 @@ mod tests {
 
         let regions = vec![
             MapRegion {
-                start: 0x14000_0000,
-                end: 0x14000_2000,
+                start: 0x0001_4000_0000,
+                end: 0x0001_4000_2000,
                 permissions: rw_perms(),
                 offset: 0,
                 device: "00:00".to_string(),
@@ -408,13 +434,13 @@ mod tests {
 
         let mut module_data = vec![0u8; 0x1000];
         module_data[0x80..0x88].copy_from_slice(&pointer_value.to_le_bytes());
-        mock.add_region(0x14000_0000, module_data);
+        mock.add_region(0x0001_4000_0000, module_data);
         mock.add_region(0x2000_0000, vec![0u8; 0x1000]);
 
         let regions = vec![
             MapRegion {
-                start: 0x14000_0000,
-                end: 0x14000_1000,
+                start: 0x0001_4000_0000,
+                end: 0x0001_4000_1000,
                 permissions: rw_perms(),
                 offset: 0,
                 device: "00:00".to_string(),
@@ -461,15 +487,15 @@ mod tests {
 
         // Module does NOT point to target directly
         let module_data = vec![0u8; 0x1000];
-        mock.add_region(0x14000_0000, module_data);
+        mock.add_region(0x0001_4000_0000, module_data);
 
         // Target region
         mock.add_region(0x3000_0000, vec![0u8; 0x1000]);
 
         let regions = vec![
             MapRegion {
-                start: 0x14000_0000,
-                end: 0x14000_1000,
+                start: 0x0001_4000_0000,
+                end: 0x0001_4000_1000,
                 permissions: rw_perms(),
                 offset: 0,
                 device: "00:00".to_string(),
@@ -522,7 +548,7 @@ mod tests {
         // Module -> intermediate
         let mut module_data = vec![0u8; 0x1000];
         module_data[0x200..0x208].copy_from_slice(&intermediate.to_le_bytes());
-        mock.add_region(0x14000_0000, module_data);
+        mock.add_region(0x0001_4000_0000, module_data);
 
         // Intermediate -> target
         let mut inter_data = vec![0u8; 0x1000];
@@ -533,8 +559,8 @@ mod tests {
 
         let regions = vec![
             MapRegion {
-                start: 0x14000_0000,
-                end: 0x14000_1000,
+                start: 0x0001_4000_0000,
+                end: 0x0001_4000_1000,
                 permissions: rw_perms(),
                 offset: 0,
                 device: "00:00".to_string(),
@@ -581,13 +607,13 @@ mod tests {
     #[test]
     fn no_chains_when_no_pointers() {
         let mock = MockMemoryAccess::new(1);
-        mock.add_region(0x14000_0000, vec![0u8; 0x1000]);
+        mock.add_region(0x0001_4000_0000, vec![0u8; 0x1000]);
         mock.add_region(0x2000_0000, vec![0u8; 0x1000]);
 
         let regions = vec![
             MapRegion {
-                start: 0x14000_0000,
-                end: 0x14000_1000,
+                start: 0x0001_4000_0000,
+                end: 0x0001_4000_1000,
                 permissions: rw_perms(),
                 offset: 0,
                 device: "00:00".to_string(),

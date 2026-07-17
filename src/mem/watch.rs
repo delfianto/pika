@@ -147,8 +147,7 @@ impl WatchManager {
             let thread = std::thread::Builder::new()
                 .name(format!("watch-{watch_id}"))
                 .spawn(move || {
-                    if let Err(e) =
-                        watch_loop(&config_clone, &stop_clone, &hits_clone, &mem_clone)
+                    if let Err(e) = watch_loop(&config_clone, &stop_clone, &hits_clone, &mem_clone)
                     {
                         tracing::error!(error = %e, "watch loop failed");
                     }
@@ -213,13 +212,7 @@ impl WatchManager {
             .map(|entry| {
                 let id = entry.key().clone();
                 let h = entry.value();
-                let hit_count: u64 = h
-                    .hits
-                    .lock()
-                    .unwrap()
-                    .iter()
-                    .map(|hit| hit.hit_count)
-                    .sum();
+                let hit_count: u64 = h.hits.lock().unwrap().iter().map(|hit| hit.hit_count).sum();
                 WatchEntryJson {
                     watch_id: id,
                     pid: h.config.pid,
@@ -295,7 +288,7 @@ fn watch_loop(
 ) -> anyhow::Result<()> {
     use nix::sys::ptrace;
     use nix::sys::signal::Signal;
-    use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
+    use nix::sys::wait::{WaitPidFlag, WaitStatus, waitpid};
     use nix::unistd::Pid;
 
     let tid = pick_thread(config.pid)?;
@@ -306,11 +299,10 @@ fn watch_loop(
         .map_err(|e| anyhow::anyhow!("PTRACE_SEIZE on tid {tid} failed: {e}"))?;
 
     // Briefly interrupt to set debug registers
-    ptrace::interrupt(pid)
-        .map_err(|e| anyhow::anyhow!("PTRACE_INTERRUPT failed: {e}"))?;
+    ptrace::interrupt(pid).map_err(|e| anyhow::anyhow!("PTRACE_INTERRUPT failed: {e}"))?;
 
     match waitpid(pid, Some(WaitPidFlag::WSTOPPED)) {
-        Ok(WaitStatus::PtraceEvent(..)) | Ok(WaitStatus::Stopped(..)) => {}
+        Ok(WaitStatus::PtraceEvent(..) | WaitStatus::Stopped(..)) => {}
         other => {
             let _ = ptrace::detach(pid, None);
             anyhow::bail!("unexpected wait result after interrupt: {other:?}");
@@ -328,8 +320,8 @@ fn watch_loop(
         match waitpid(pid, Some(WaitPidFlag::WNOHANG)) {
             Ok(WaitStatus::Stopped(_, Signal::SIGTRAP)) => {
                 // Read registers
-                let regs = ptrace::getregs(pid)
-                    .map_err(|e| anyhow::anyhow!("getregs failed: {e}"))?;
+                let regs =
+                    ptrace::getregs(pid).map_err(|e| anyhow::anyhow!("getregs failed: {e}"))?;
                 // RIP points to the instruction AFTER the one that triggered,
                 // but for hardware watchpoints on x86_64 it points to the
                 // instruction that CAUSED the trap (unlike software breakpoints).
@@ -356,10 +348,7 @@ fn watch_loop(
                 // Re-deliver other signals
                 let _ = ptrace::cont(pid, sig);
             }
-            Ok(WaitStatus::StillAlive) => {
-                std::thread::sleep(std::time::Duration::from_millis(1));
-            }
-            Ok(WaitStatus::Exited(..)) | Ok(WaitStatus::Signaled(..)) => {
+            Ok(WaitStatus::Exited(..) | WaitStatus::Signaled(..)) => {
                 tracing::info!("traced thread exited");
                 break;
             }
@@ -391,14 +380,12 @@ fn set_debug_registers(pid: nix::unistd::Pid, config: &WatchConfig) -> anyhow::R
 #[cfg(target_os = "linux")]
 fn cleanup_ptrace(pid: nix::unistd::Pid) {
     use nix::sys::ptrace;
-    use nix::sys::wait::{waitpid, WaitPidFlag};
+    use nix::sys::wait::{WaitPidFlag, waitpid};
 
-    if ptrace::interrupt(pid).is_ok() {
-        if waitpid(pid, Some(WaitPidFlag::WSTOPPED)).is_ok() {
-            let _ = write_user(pid, DR0_OFFSET, 0);
-            let _ = write_user(pid, DR7_OFFSET, 0);
-            let _ = write_user(pid, DR6_OFFSET, 0);
-        }
+    if ptrace::interrupt(pid).is_ok() && waitpid(pid, Some(WaitPidFlag::WSTOPPED)).is_ok() {
+        let _ = write_user(pid, DR0_OFFSET, 0);
+        let _ = write_user(pid, DR7_OFFSET, 0);
+        let _ = write_user(pid, DR6_OFFSET, 0);
     }
     let _ = ptrace::detach(pid, None);
 }
@@ -469,7 +456,9 @@ fn disassemble_rip(mem: &Arc<dyn MemoryAccess>, pid: u32, rip: u64) -> Option<St
     crate::mem::disassemble::disassemble_at(mem.as_ref(), pid, rip, 1)
         .ok()
         .and_then(|insns| {
-            insns.first().map(|i| format!("{} {}", i.mnemonic, i.op_str))
+            insns
+                .first()
+                .map(|i| format!("{} {}", i.mnemonic, i.op_str))
         })
 }
 

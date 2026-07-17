@@ -78,7 +78,10 @@ impl JsonRpcRequest {
     /// Validate that this is a valid JSON-RPC 2.0 request.
     pub fn validate(&self) -> Result<(), String> {
         if self.jsonrpc != "2.0" {
-            return Err(format!("expected jsonrpc \"2.0\", got \"{}\"", self.jsonrpc));
+            return Err(format!(
+                "expected jsonrpc \"2.0\", got \"{}\"",
+                self.jsonrpc
+            ));
         }
         if self.method.is_empty() {
             return Err("method must not be empty".to_string());
@@ -115,7 +118,10 @@ mod tests {
 
     #[test]
     fn serialize_ok_response() {
-        let resp = JsonRpcResponse::ok(Some(serde_json::json!(1)), serde_json::json!({"status": "ok"}));
+        let resp = JsonRpcResponse::ok(
+            Some(serde_json::json!(1)),
+            serde_json::json!({"status": "ok"}),
+        );
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("\"result\""));
         assert!(!json.contains("\"error\""));
@@ -165,7 +171,10 @@ mod tests {
 
     #[test]
     fn response_roundtrip() {
-        let resp = JsonRpcResponse::ok(Some(serde_json::json!(42)), serde_json::json!({"candidates": 100}));
+        let resp = JsonRpcResponse::ok(
+            Some(serde_json::json!(42)),
+            serde_json::json!({"candidates": 100}),
+        );
         let json = serde_json::to_string(&resp).unwrap();
         let parsed: JsonRpcResponse = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.id, Some(serde_json::json!(42)));

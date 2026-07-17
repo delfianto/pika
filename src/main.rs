@@ -85,7 +85,10 @@ async fn main() -> Result<()> {
 
         Command::Scan { pid, value, dtype } => {
             let result = client
-                .call("scan.start", json!({"pid": pid, "value": value, "dtype": dtype}))
+                .call(
+                    "scan.start",
+                    json!({"pid": pid, "value": value, "dtype": dtype}),
+                )
                 .await?;
             output!(output_json, result, {
                 println!("Session: {}", result["session_id"].as_str().unwrap_or("?"));
@@ -130,7 +133,10 @@ async fn main() -> Result<()> {
                 if sessions.is_empty() {
                     println!("No active scan sessions.");
                 } else {
-                    println!("{:<38} {:<8} {:<12} {:<8} DTYPE", "SESSION", "PID", "CANDIDATES", "VALUE");
+                    println!(
+                        "{:<38} {:<8} {:<12} {:<8} DTYPE",
+                        "SESSION", "PID", "CANDIDATES", "VALUE"
+                    );
                     for s in &sessions {
                         println!(
                             "{:<38} {:<8} {:<12} {:<8} {}",
@@ -233,7 +239,10 @@ async fn main() -> Result<()> {
                 let failed = result["failed"].as_u64().unwrap_or(0);
                 if let Some(addrs) = result["addresses"].as_array() {
                     for addr in addrs {
-                        println!("  wrote {value} ({dtype}) -> {}", addr.as_str().unwrap_or("?"));
+                        println!(
+                            "  wrote {value} ({dtype}) -> {}",
+                            addr.as_str().unwrap_or("?")
+                        );
                     }
                 }
                 if failed > 0 {
@@ -267,7 +276,10 @@ async fn main() -> Result<()> {
                 let failed = result["failed"].as_u64().unwrap_or(0);
                 if let Some(addrs) = result["addresses"].as_array() {
                     for addr in addrs {
-                        println!("  frozen {value} ({dtype}) -> {}", addr.as_str().unwrap_or("?"));
+                        println!(
+                            "  frozen {value} ({dtype}) -> {}",
+                            addr.as_str().unwrap_or("?")
+                        );
                     }
                 }
                 if failed > 0 {
@@ -418,11 +430,22 @@ async fn main() -> Result<()> {
         }
 
         // ── Watch commands ─────────────────────────────────────────────
-        Command::Watch { pid, address, mode, size, detail } => {
-            let result = client.call("watch.start", json!({
-                "pid": pid, "address": address, "mode": mode,
-                "size": size, "detail": detail,
-            })).await?;
+        Command::Watch {
+            pid,
+            address,
+            mode,
+            size,
+            detail,
+        } => {
+            let result = client
+                .call(
+                    "watch.start",
+                    json!({
+                        "pid": pid, "address": address, "mode": mode,
+                        "size": size, "detail": detail,
+                    }),
+                )
+                .await?;
             output!(output_json, result, {
                 let watch_id = result["watch_id"].as_str().unwrap_or("?");
                 println!("Watchpoint set: {watch_id}");
@@ -433,7 +456,9 @@ async fn main() -> Result<()> {
         }
 
         Command::WatchHits { watch_id } => {
-            let result = client.call("watch.hits", json!({"watch_id": watch_id})).await?;
+            let result = client
+                .call("watch.hits", json!({"watch_id": watch_id}))
+                .await?;
             output!(output_json, result, {
                 if let Some(hits) = result.as_array() {
                     if hits.is_empty() {
@@ -441,7 +466,8 @@ async fn main() -> Result<()> {
                     } else {
                         println!("{:<6} {:<20} INSTRUCTION", "HITS", "RIP");
                         for hit in hits {
-                            println!("  {:<6} {:<20} {}",
+                            println!(
+                                "  {:<6} {:<20} {}",
                                 hit["hit_count"],
                                 hit["rip"].as_str().unwrap_or("?"),
                                 hit["disasm"].as_str().unwrap_or("(unknown)"),
@@ -454,7 +480,9 @@ async fn main() -> Result<()> {
         }
 
         Command::WatchStop { watch_id } => {
-            let result = client.call("watch.stop", json!({"watch_id": watch_id})).await?;
+            let result = client
+                .call("watch.stop", json!({"watch_id": watch_id}))
+                .await?;
             output!(output_json, result, {
                 println!("Watchpoint {watch_id} stopped.");
             });
@@ -467,9 +495,13 @@ async fn main() -> Result<()> {
                 if watches.is_empty() {
                     println!("No active watchpoints.");
                 } else {
-                    println!("{:<14} {:<8} {:<20} {:<8} {:<6} HITS", "WATCH_ID", "PID", "ADDRESS", "MODE", "SIZE");
+                    println!(
+                        "{:<14} {:<8} {:<20} {:<8} {:<6} HITS",
+                        "WATCH_ID", "PID", "ADDRESS", "MODE", "SIZE"
+                    );
                     for w in &watches {
-                        println!("{:<14} {:<8} {:<20} {:<8} {:<6} {}",
+                        println!(
+                            "{:<14} {:<8} {:<20} {:<8} {:<6} {}",
                             w["watch_id"].as_str().unwrap_or("?"),
                             w["pid"],
                             w["address"].as_str().unwrap_or("?"),
@@ -491,27 +523,50 @@ async fn main() -> Result<()> {
             let result = client.call("code.nop", params).await?;
             output!(output_json, result, {
                 println!("NOPed at {address}");
-                println!("  original: {}", result["original_bytes"].as_str().unwrap_or("?"));
-                println!("  patched:  {}", result["patched_bytes"].as_str().unwrap_or("?"));
+                println!(
+                    "  original: {}",
+                    result["original_bytes"].as_str().unwrap_or("?")
+                );
+                println!(
+                    "  patched:  {}",
+                    result["patched_bytes"].as_str().unwrap_or("?")
+                );
                 println!("  Restore:  pika restore {pid} {address}");
             });
         }
 
-        Command::Patch { pid, address, bytes } => {
-            let result = client.call("code.patch", json!({
-                "pid": pid, "address": address, "bytes": bytes,
-            })).await?;
+        Command::Patch {
+            pid,
+            address,
+            bytes,
+        } => {
+            let result = client
+                .call(
+                    "code.patch",
+                    json!({
+                        "pid": pid, "address": address, "bytes": bytes,
+                    }),
+                )
+                .await?;
             output!(output_json, result, {
                 println!("Patched at {address}");
-                println!("  original: {}", result["original_bytes"].as_str().unwrap_or("?"));
+                println!(
+                    "  original: {}",
+                    result["original_bytes"].as_str().unwrap_or("?")
+                );
                 println!("  Restore:  pika restore {pid} {address}");
             });
         }
 
         Command::Restore { pid, address } => {
-            let result = client.call("code.restore", json!({
-                "pid": pid, "address": address,
-            })).await?;
+            let result = client
+                .call(
+                    "code.restore",
+                    json!({
+                        "pid": pid, "address": address,
+                    }),
+                )
+                .await?;
             output!(output_json, result, {
                 println!("Restored original bytes at {address}");
             });
@@ -526,7 +581,8 @@ async fn main() -> Result<()> {
                 } else {
                     println!("{:<20} {:<30} PATCHED", "ADDRESS", "ORIGINAL");
                     for p in &patches {
-                        println!("{:<20} {:<30} {}",
+                        println!(
+                            "{:<20} {:<30} {}",
                             p["address"].as_str().unwrap_or("?"),
                             p["original_bytes"].as_str().unwrap_or("?"),
                             p["patched_bytes"].as_str().unwrap_or("?"),

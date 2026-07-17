@@ -33,10 +33,6 @@ pub fn check_platform() -> PlatformCheck {
     let has_cap = check_cap_sys_ptrace();
 
     match ptrace_scope.as_str() {
-        "0" => {
-            // Classic mode: same-UID access is unrestricted
-            // No warnings needed
-        }
         "1" => {
             // Restricted: need CAP_SYS_PTRACE or parent relationship
             if !is_root && !has_cap {
@@ -45,8 +41,7 @@ pub fn check_platform() -> PlatformCheck {
                      Fix with:  sudo setcap cap_sys_ptrace=eip {}\n\
                      Or:        sudo sysctl kernel.yama.ptrace_scope=0",
                     std::env::current_exe()
-                        .map(|p| p.display().to_string())
-                        .unwrap_or_else(|_| "pika".to_string())
+                        .map_or_else(|_| "pika".to_string(), |p| p.display().to_string())
                 ));
             }
         }
@@ -66,8 +61,10 @@ pub fn check_platform() -> PlatformCheck {
                     .to_string(),
             );
         }
-        "unknown" => {
-            // Yama not loaded (some minimal kernels) — likely permissive
+        "0" | "unknown" => {
+            // Classic mode (same-UID access unrestricted) or Yama not loaded
+            // (some minimal kernels) — both are treated as permissive, no
+            // warning needed.
         }
         other => {
             warnings.push(format!("unexpected ptrace_scope value: {other}"));
@@ -89,9 +86,8 @@ pub fn check_platform() -> PlatformCheck {
 /// `CAP_SYS_PTRACE` is capability bit 19.
 #[cfg(target_os = "linux")]
 fn check_cap_sys_ptrace() -> bool {
-    let status = match std::fs::read_to_string("/proc/self/status") {
-        Ok(s) => s,
-        Err(_) => return false,
+    let Ok(status) = std::fs::read_to_string("/proc/self/status") else {
+        return false;
     };
 
     for line in status.lines() {

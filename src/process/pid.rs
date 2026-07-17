@@ -104,15 +104,13 @@ pub fn list_wine_processes() -> Result<Vec<ProcessInfo>> {
 
         // Read cmdline — the .exe name comes from argv[0]
         let cmdline_path = format!("/proc/{pid}/cmdline");
-        let cmdline = match std::fs::read_to_string(&cmdline_path) {
-            Ok(c) => c,
-            Err(_) => continue,
+        let Ok(cmdline) = std::fs::read_to_string(&cmdline_path) else {
+            continue;
         };
 
         // Extract .exe name from argv[0] only
-        let exe_name = match extract_exe_name(&cmdline) {
-            Some(name) => name,
-            None => continue,
+        let Some(exe_name) = extract_exe_name(&cmdline) else {
+            continue;
         };
 
         // Skip Wine infrastructure
@@ -194,13 +192,14 @@ mod tests {
 
     #[test]
     fn rejects_reaper_with_exe_in_args() {
-        let cmdline = "/home/user/.steam/ubuntu12_32/reaper\0SteamLaunch\0AppId=12345\0--\0/path/to/Game.exe";
+        let cmdline =
+            "/home/user/.steam/ubuntu12_32/reaper\0SteamLaunch\0AppId=12345\0--\0/path/to/Game.exe";
         assert_eq!(extract_exe_name(cmdline), None);
     }
 
     #[test]
     fn rejects_pressure_vessel() {
-        let cmdline = "/path/to/srt-bwrap\0--args\026\0/path/to/pv-adverb\0--\0/path/to/proton\0waitforexitandrun\0/path/to/Game.exe";
+        let cmdline = "/path/to/srt-bwrap\0--args\x0026\0/path/to/pv-adverb\0--\0/path/to/proton\0waitforexitandrun\0/path/to/Game.exe";
         assert_eq!(extract_exe_name(cmdline), None);
     }
 

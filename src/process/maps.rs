@@ -317,9 +317,7 @@ fn is_wine_system_dll(path_lower: &str) -> bool {
         "winex11",
         "winewayland",
     ];
-    wine_dlls
-        .iter()
-        .any(|dll| path_lower.contains(dll))
+    wine_dlls.iter().any(|dll| path_lower.contains(dll))
 }
 
 #[cfg(test)]
@@ -419,7 +417,12 @@ mod tests {
     fn classify_shared_mapping_is_never_touch() {
         // ANY shared mapping = NeverTouch, regardless of path
         let safety = classify_region(
-            &Permissions { read: true, write: true, execute: false, shared: true },
+            &Permissions {
+                read: true,
+                write: true,
+                execute: false,
+                shared: true,
+            },
             "",
             65536,
         );
@@ -429,7 +432,12 @@ mod tests {
     #[test]
     fn classify_nvidia_device() {
         let safety = classify_region(
-            &Permissions { read: true, write: true, execute: false, shared: true },
+            &Permissions {
+                read: true,
+                write: true,
+                execute: false,
+                shared: true,
+            },
             "/dev/nvidia0",
             268_435_456,
         );
@@ -439,7 +447,12 @@ mod tests {
     #[test]
     fn classify_nvidia_uvm() {
         let safety = classify_region(
-            &Permissions { read: true, write: true, execute: false, shared: true },
+            &Permissions {
+                read: true,
+                write: true,
+                execute: false,
+                shared: true,
+            },
             "/dev/nvidia-uvm",
             4_294_967_296,
         );
@@ -449,7 +462,12 @@ mod tests {
     #[test]
     fn classify_amd_render_node() {
         let safety = classify_region(
-            &Permissions { read: true, write: true, execute: false, shared: true },
+            &Permissions {
+                read: true,
+                write: true,
+                execute: false,
+                shared: true,
+            },
             "/dev/dri/renderD128",
             268_435_456,
         );
@@ -459,7 +477,12 @@ mod tests {
     #[test]
     fn classify_wine_shared_memory() {
         let safety = classify_region(
-            &Permissions { read: true, write: true, execute: false, shared: true },
+            &Permissions {
+                read: true,
+                write: true,
+                execute: false,
+                shared: true,
+            },
             "/dev/shm/wine-abcdef123456",
             65536,
         );
@@ -469,7 +492,12 @@ mod tests {
     #[test]
     fn classify_wineserver_path() {
         let safety = classify_region(
-            &Permissions { read: true, write: true, execute: false, shared: false },
+            &Permissions {
+                read: true,
+                write: true,
+                execute: false,
+                shared: false,
+            },
             "/tmp/.wine-1000/server-xxxxx/wineserver",
             4096,
         );
@@ -479,7 +507,12 @@ mod tests {
     #[test]
     fn classify_code_section() {
         let safety = classify_region(
-            &Permissions { read: true, write: false, execute: true, shared: false },
+            &Permissions {
+                read: true,
+                write: false,
+                execute: true,
+                shared: false,
+            },
             "/path/to/Game.exe",
             1_048_576,
         );
@@ -489,7 +522,12 @@ mod tests {
     #[test]
     fn classify_dxvk_dll_data() {
         let safety = classify_region(
-            &Permissions { read: true, write: true, execute: false, shared: false },
+            &Permissions {
+                read: true,
+                write: true,
+                execute: false,
+                shared: false,
+            },
             "/path/to/proton/lib/wine/dxvk/d3d11.dll",
             131_072,
         );
@@ -499,7 +537,12 @@ mod tests {
     #[test]
     fn classify_vkd3d_dll() {
         let safety = classify_region(
-            &Permissions { read: true, write: true, execute: false, shared: false },
+            &Permissions {
+                read: true,
+                write: true,
+                execute: false,
+                shared: false,
+            },
             "/path/to/proton/lib64/wine/vkd3d-proton/d3d12.dll",
             65536,
         );
@@ -509,7 +552,12 @@ mod tests {
     #[test]
     fn classify_dxgi_dll() {
         let safety = classify_region(
-            &Permissions { read: true, write: true, execute: false, shared: false },
+            &Permissions {
+                read: true,
+                write: true,
+                execute: false,
+                shared: false,
+            },
             "/path/to/proton/lib/wine/dxvk/dxgi.dll",
             32768,
         );
@@ -519,7 +567,12 @@ mod tests {
     #[test]
     fn classify_vulkan_driver_lib() {
         let safety = classify_region(
-            &Permissions { read: true, write: true, execute: false, shared: false },
+            &Permissions {
+                read: true,
+                write: true,
+                execute: false,
+                shared: false,
+            },
             "/usr/lib/x86_64-linux-gnu/libvulkan_radeon.so",
             131_072,
         );
@@ -529,7 +582,12 @@ mod tests {
     #[test]
     fn classify_mesa_lib() {
         let safety = classify_region(
-            &Permissions { read: true, write: true, execute: false, shared: false },
+            &Permissions {
+                read: true,
+                write: true,
+                execute: false,
+                shared: false,
+            },
             "/usr/lib/x86_64-linux-gnu/dri/radeonsi_dri.so",
             262_144,
         );
@@ -539,7 +597,12 @@ mod tests {
     #[test]
     fn classify_nvidia_userspace_lib() {
         let safety = classify_region(
-            &Permissions { read: true, write: true, execute: false, shared: false },
+            &Permissions {
+                read: true,
+                write: true,
+                execute: false,
+                shared: false,
+            },
             "/usr/lib/x86_64-linux-gnu/libnvidia-glcore.so.535.129.03",
             524_288,
         );
@@ -549,7 +612,12 @@ mod tests {
     #[test]
     fn classify_ntdll() {
         let safety = classify_region(
-            &Permissions { read: true, write: true, execute: false, shared: false },
+            &Permissions {
+                read: true,
+                write: true,
+                execute: false,
+                shared: false,
+            },
             "/path/to/proton/dist/lib64/wine/x86_64-windows/ntdll.dll",
             65536,
         );
@@ -559,7 +627,12 @@ mod tests {
     #[test]
     fn classify_kernel32() {
         let safety = classify_region(
-            &Permissions { read: true, write: true, execute: false, shared: false },
+            &Permissions {
+                read: true,
+                write: true,
+                execute: false,
+                shared: false,
+            },
             "/path/to/proton/lib64/wine/x86_64-windows/kernel32.dll",
             32768,
         );
@@ -569,7 +642,12 @@ mod tests {
     #[test]
     fn classify_anonymous_safe_heap() {
         let safety = classify_region(
-            &Permissions { read: true, write: true, execute: false, shared: false },
+            &Permissions {
+                read: true,
+                write: true,
+                execute: false,
+                shared: false,
+            },
             "",
             16_777_216, // 16MB - typical game heap region
         );
@@ -579,7 +657,12 @@ mod tests {
     #[test]
     fn classify_anonymous_small_region_risky() {
         let safety = classify_region(
-            &Permissions { read: true, write: true, execute: false, shared: false },
+            &Permissions {
+                read: true,
+                write: true,
+                execute: false,
+                shared: false,
+            },
             "",
             2048, // < 4KB bookkeeping
         );
@@ -589,7 +672,12 @@ mod tests {
     #[test]
     fn classify_anonymous_huge_region_risky() {
         let safety = classify_region(
-            &Permissions { read: true, write: true, execute: false, shared: false },
+            &Permissions {
+                read: true,
+                write: true,
+                execute: false,
+                shared: false,
+            },
             "",
             2_147_483_648, // 2GB - likely DXVK shader cache
         );
@@ -599,7 +687,12 @@ mod tests {
     #[test]
     fn classify_heap_label() {
         let safety = classify_region(
-            &Permissions { read: true, write: true, execute: false, shared: false },
+            &Permissions {
+                read: true,
+                write: true,
+                execute: false,
+                shared: false,
+            },
             "[heap]",
             1_048_576,
         );
@@ -609,7 +702,12 @@ mod tests {
     #[test]
     fn classify_stack_label() {
         let safety = classify_region(
-            &Permissions { read: true, write: true, execute: false, shared: false },
+            &Permissions {
+                read: true,
+                write: true,
+                execute: false,
+                shared: false,
+            },
             "[stack]",
             8_388_608, // 8MB default stack
         );
@@ -619,7 +717,12 @@ mod tests {
     #[test]
     fn classify_game_exe_data_section() {
         let safety = classify_region(
-            &Permissions { read: true, write: true, execute: false, shared: false },
+            &Permissions {
+                read: true,
+                write: true,
+                execute: false,
+                shared: false,
+            },
             "/path/to/game/Game.exe",
             65536,
         );
@@ -630,7 +733,12 @@ mod tests {
     #[test]
     fn classify_game_dll_data_section() {
         let safety = classify_region(
-            &Permissions { read: true, write: true, execute: false, shared: false },
+            &Permissions {
+                read: true,
+                write: true,
+                execute: false,
+                shared: false,
+            },
             "/path/to/game/GameLogic.dll",
             131_072,
         );
@@ -640,7 +748,12 @@ mod tests {
     #[test]
     fn classify_guard_page_no_perms() {
         let safety = classify_region(
-            &Permissions { read: false, write: false, execute: false, shared: false },
+            &Permissions {
+                read: false,
+                write: false,
+                execute: false,
+                shared: false,
+            },
             "",
             4096,
         );
@@ -651,7 +764,12 @@ mod tests {
     #[test]
     fn classify_pulseaudio_shm() {
         let safety = classify_region(
-            &Permissions { read: true, write: true, execute: false, shared: true },
+            &Permissions {
+                read: true,
+                write: true,
+                execute: false,
+                shared: true,
+            },
             "/dev/shm/pulse-shm-12345",
             262_144,
         );
@@ -722,7 +840,12 @@ mod tests {
         let r = MapRegion {
             start: 0x1000,
             end: 0x2000,
-            permissions: Permissions { read: true, write: true, execute: false, shared: false },
+            permissions: Permissions {
+                read: true,
+                write: true,
+                execute: false,
+                shared: false,
+            },
             offset: 0,
             device: "00:00".to_string(),
             inode: 0,
@@ -738,7 +861,12 @@ mod tests {
     #[test]
     fn classify_intel_gpu() {
         let safety = classify_region(
-            &Permissions { read: true, write: true, execute: false, shared: true },
+            &Permissions {
+                read: true,
+                write: true,
+                execute: false,
+                shared: true,
+            },
             "/dev/dri/card0",
             65536,
         );
@@ -748,7 +876,12 @@ mod tests {
     #[test]
     fn classify_amd_card() {
         let safety = classify_region(
-            &Permissions { read: true, write: true, execute: false, shared: true },
+            &Permissions {
+                read: true,
+                write: true,
+                execute: false,
+                shared: true,
+            },
             "/dev/dri/card1",
             1_048_576,
         );
@@ -760,7 +893,12 @@ mod tests {
     #[test]
     fn unity_game_assembly_is_safe() {
         let safety = classify_region(
-            &Permissions { read: true, write: true, execute: false, shared: false },
+            &Permissions {
+                read: true,
+                write: true,
+                execute: false,
+                shared: false,
+            },
             "/path/to/game/GameAssembly.dll",
             2_097_152,
         );
@@ -770,7 +908,12 @@ mod tests {
     #[test]
     fn unreal_engine_dll_is_safe() {
         let safety = classify_region(
-            &Permissions { read: true, write: true, execute: false, shared: false },
+            &Permissions {
+                read: true,
+                write: true,
+                execute: false,
+                shared: false,
+            },
             "/path/to/game/Engine/Binaries/Win64/UnrealEngine.dll",
             4_194_304,
         );
@@ -781,7 +924,12 @@ mod tests {
     fn anonymous_256mb_is_safe() {
         // 256MB anonymous region is large but under the 1GB threshold
         let safety = classify_region(
-            &Permissions { read: true, write: true, execute: false, shared: false },
+            &Permissions {
+                read: true,
+                write: true,
+                execute: false,
+                shared: false,
+            },
             "",
             268_435_456,
         );
@@ -791,7 +939,12 @@ mod tests {
     #[test]
     fn anonymous_exactly_1gb_is_safe() {
         let safety = classify_region(
-            &Permissions { read: true, write: true, execute: false, shared: false },
+            &Permissions {
+                read: true,
+                write: true,
+                execute: false,
+                shared: false,
+            },
             "",
             1_073_741_824, // exactly 1GB -- not > 1GB
         );
@@ -801,7 +954,12 @@ mod tests {
     #[test]
     fn anonymous_over_1gb_is_risky() {
         let safety = classify_region(
-            &Permissions { read: true, write: true, execute: false, shared: false },
+            &Permissions {
+                read: true,
+                write: true,
+                execute: false,
+                shared: false,
+            },
             "",
             1_073_741_825, // 1GB + 1 byte
         );

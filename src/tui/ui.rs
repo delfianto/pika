@@ -10,7 +10,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3), // Title bar
-            Constraint::Min(10),  // Main content
+            Constraint::Min(10),   // Main content
             Constraint::Length(3), // Status bar
         ])
         .split(frame.area());
@@ -26,8 +26,8 @@ pub fn draw(frame: &mut Frame, app: &App) {
         Some(p) => format!("Attached to: {} (PID {})", p.name, p.pid),
         None => "No process selected. Use 'pika ps' to list processes.".to_string(),
     };
-    let content = Paragraph::new(process_info)
-        .block(Block::default().borders(Borders::ALL).title("Scanner"));
+    let content =
+        Paragraph::new(process_info).block(Block::default().borders(Borders::ALL).title("Scanner"));
     frame.render_widget(content, chunks[1]);
 
     // Status bar
