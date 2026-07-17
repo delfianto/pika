@@ -29,9 +29,9 @@ tokio = { version = "1", features = ["full"] }
 rayon = "1"
 
 # Scanning
-memchr = "2"
-bytemuck = { version = "1", features = ["derive"] }
 bitflags = { version = "2", features = ["serde"] }
+bytemuck = { version = "1", features = ["derive"] }
+memchr = "2"
 
 # Concurrency
 dashmap = "6"
@@ -40,8 +40,8 @@ dashmap = "6"
 nid = "3"
 
 # TUI
-ratatui = "0.30"
 crossterm = "0.29"
+ratatui = "0.30"
 
 # Logging
 tracing = "0.1"
@@ -49,8 +49,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # Linux-specific dependencies (only compiled on Linux)
 [target.'cfg(target_os = "linux")'.dependencies]
-nix = { version = "0.31", features = ["process", "uio", "signal", "ptrace", "user"] }
 capstone = "0.14"
+nix = { version = "0.31", features = ["process", "uio", "signal", "ptrace", "user"] }
 
 [dev-dependencies]
 proptest = "1"
