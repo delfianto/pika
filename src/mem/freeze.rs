@@ -1,6 +1,6 @@
-use crate::scan::candidate::ValueType;
 use crate::mem::access::MemoryAccess;
 use crate::mem::write::write_value;
+use crate::scan::candidate::ValueType;
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -132,7 +132,13 @@ fn freeze_loop(
 ) {
     while !stop.load(std::sync::atomic::Ordering::Relaxed) {
         // write_value performs its own pre-flight safety check every time
-        if let Err(e) = write_value(mem.as_ref(), entry.pid, entry.address, entry.value, entry.dtype) {
+        if let Err(e) = write_value(
+            mem.as_ref(),
+            entry.pid,
+            entry.address,
+            entry.value,
+            entry.dtype,
+        ) {
             tracing::warn!(
                 address = format!("{:#x}", entry.address),
                 error = %e,
@@ -147,8 +153,8 @@ fn freeze_loop(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::process::maps::{MapRegion, Permissions, RegionSafety};
     use crate::mem::access::MockMemoryAccess;
+    use crate::process::maps::{MapRegion, Permissions, RegionSafety};
 
     fn mock_with_region() -> Arc<MockMemoryAccess> {
         let mock = MockMemoryAccess::new(1);
@@ -156,7 +162,12 @@ mod tests {
         mock.set_maps(vec![MapRegion {
             start: 0x1000,
             end: 0x2000,
-            permissions: Permissions { read: true, write: true, execute: false, shared: false },
+            permissions: Permissions {
+                read: true,
+                write: true,
+                execute: false,
+                shared: false,
+            },
             offset: 0,
             device: "00:00".to_string(),
             inode: 0,
@@ -210,7 +221,7 @@ mod tests {
 
         let list = manager.list();
         assert_eq!(list.len(), 1);
-        assert_eq!(list[0].value, 42.0);
+        assert!((list[0].value - 42.0).abs() < f64::EPSILON);
         assert!(list[0].active);
 
         manager.stop_all();

@@ -1,6 +1,6 @@
-use crate::scan::candidate::ValueType;
-use crate::process::maps::RegionSafety;
 use crate::mem::access::MemoryAccess;
+use crate::process::maps::RegionSafety;
+use crate::scan::candidate::ValueType;
 use anyhow::{Context, Result};
 
 /// Encode a numeric value into bytes according to the specified type.
@@ -48,7 +48,9 @@ pub fn write_value(
         .read_maps(pid)
         .context("failed to read maps for pre-flight check")?;
 
-    let containing_region = regions.iter().find(|r| address >= r.start && address + data.len() as u64 <= r.end);
+    let containing_region = regions
+        .iter()
+        .find(|r| address >= r.start && address + data.len() as u64 <= r.end);
 
     match containing_region {
         None => anyhow::bail!(
@@ -94,8 +96,8 @@ pub fn write_value(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::process::maps::{MapRegion, Permissions};
     use crate::mem::access::MockMemoryAccess;
+    use crate::process::maps::{MapRegion, Permissions};
 
     fn mock_with_safe_region() -> MockMemoryAccess {
         let mock = MockMemoryAccess::new(1);
@@ -103,7 +105,12 @@ mod tests {
         mock.set_maps(vec![MapRegion {
             start: 0x1000,
             end: 0x2000,
-            permissions: Permissions { read: true, write: true, execute: false, shared: false },
+            permissions: Permissions {
+                read: true,
+                write: true,
+                execute: false,
+                shared: false,
+            },
             offset: 0,
             device: "00:00".to_string(),
             inode: 0,
@@ -124,9 +131,9 @@ mod tests {
     #[test]
     fn write_f32_value() {
         let mock = mock_with_safe_region();
-        write_value(&mock, 1, 0x1000, 3.14, ValueType::F32).unwrap();
+        write_value(&mock, 1, 0x1000, 12.5, ValueType::F32).unwrap();
         let val: f32 = mock.read_value(0x1000);
-        assert!((val - 3.14).abs() < 0.001);
+        assert!((val - 12.5).abs() < 0.001);
     }
 
     #[test]
@@ -144,7 +151,12 @@ mod tests {
         mock.set_maps(vec![MapRegion {
             start: 0x7f00_0000,
             end: 0x7f00_1000,
-            permissions: Permissions { read: true, write: true, execute: false, shared: true },
+            permissions: Permissions {
+                read: true,
+                write: true,
+                execute: false,
+                shared: true,
+            },
             offset: 0,
             device: "00:06".to_string(),
             inode: 1111,
@@ -167,7 +179,12 @@ mod tests {
         mock.set_maps(vec![MapRegion {
             start: 0x5000,
             end: 0x6000,
-            permissions: Permissions { read: true, write: true, execute: false, shared: false },
+            permissions: Permissions {
+                read: true,
+                write: true,
+                execute: false,
+                shared: false,
+            },
             offset: 0,
             device: "00:00".to_string(),
             inode: 0,
@@ -184,7 +201,12 @@ mod tests {
         let mock = mock_with_safe_region();
         let result = write_value(&mock, 1, 0xDEAD_0000, 42.0, ValueType::I32);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("not within any mapped region"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("not within any mapped region")
+        );
     }
 
     #[test]
@@ -201,7 +223,12 @@ mod tests {
         mock.set_maps(vec![MapRegion {
             start: 0x3000,
             end: 0x4000,
-            permissions: Permissions { read: true, write: false, execute: true, shared: false },
+            permissions: Permissions {
+                read: true,
+                write: false,
+                execute: true,
+                shared: false,
+            },
             offset: 0,
             device: "00:00".to_string(),
             inode: 0,

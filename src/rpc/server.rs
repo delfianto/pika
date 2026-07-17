@@ -8,10 +8,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 type SharedState = Arc<RpcState>;
 
 /// Start the JSON-RPC server on a Unix domain socket.
-pub async fn serve_unix_socket(
-    socket_path: &str,
-    mem: Arc<dyn MemoryAccess>,
-) -> Result<()> {
+pub async fn serve_unix_socket(socket_path: &str, mem: Arc<dyn MemoryAccess>) -> Result<()> {
     // Check for an existing socket -- avoid hijacking a running daemon.
     if std::path::Path::new(socket_path).exists() {
         match std::os::unix::net::UnixStream::connect(socket_path) {
@@ -79,10 +76,7 @@ pub async fn serve_stdio(mem: Arc<dyn MemoryAccess>) -> Result<()> {
 }
 
 /// Handle a single connection (Unix socket).
-async fn handle_connection(
-    stream: tokio::net::UnixStream,
-    state: &SharedState,
-) -> Result<()> {
+async fn handle_connection(stream: tokio::net::UnixStream, state: &SharedState) -> Result<()> {
     let (reader, mut writer) = stream.into_split();
     let mut lines = BufReader::new(reader).lines();
 
@@ -138,8 +132,8 @@ async fn process_line(state: &SharedState, line: &str) -> JsonRpcResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::process::maps::{MapRegion, Permissions, RegionSafety};
     use crate::mem::access::MockMemoryAccess;
+    use crate::process::maps::{MapRegion, Permissions, RegionSafety};
 
     fn make_state() -> Arc<RpcState> {
         let mock = MockMemoryAccess::new(1);
@@ -147,7 +141,12 @@ mod tests {
         mock.set_maps(vec![MapRegion {
             start: 0x1000,
             end: 0x2000,
-            permissions: Permissions { read: true, write: true, execute: false, shared: false },
+            permissions: Permissions {
+                read: true,
+                write: true,
+                execute: false,
+                shared: false,
+            },
             offset: 0,
             device: "00:00".to_string(),
             inode: 0,

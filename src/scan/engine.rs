@@ -1,10 +1,10 @@
-use crate::scan::candidate::{Candidate, TypeFlags, ValueType, encode_value_patterns};
-use crate::process::maps::{MapRegion, RegionSafety};
 use crate::mem::access::MemoryAccess;
+use crate::process::maps::{MapRegion, RegionSafety};
+use crate::scan::candidate::{Candidate, TypeFlags, ValueType, encode_value_patterns};
 use anyhow::Result;
 use dashmap::DashMap;
-use rayon::prelude::*;
 use nid::Nanoid;
+use rayon::prelude::*;
 
 /// Default chunk size for `process_vm_readv` calls (4 MB).
 const DEFAULT_CHUNK_SIZE: usize = 4 * 1024 * 1024;
@@ -205,13 +205,13 @@ fn scan_region(
 
         // Search this chunk for all patterns
         for &(ref pattern, flags, pat_size) in patterns {
-            let hits = scan_buffer_for_pattern(&buffer[..bytes_read], &pattern[..pat_size], pat_size);
+            let hits =
+                scan_buffer_for_pattern(&buffer[..bytes_read], &pattern[..pat_size], pat_size);
             for buf_offset in hits {
                 // Copy up to 8 bytes at the match position for last_value snapshot
                 let mut last_value = [0u8; 8];
                 let copy_len = 8.min(bytes_read - buf_offset);
-                last_value[..copy_len]
-                    .copy_from_slice(&buffer[buf_offset..buf_offset + copy_len]);
+                last_value[..copy_len].copy_from_slice(&buffer[buf_offset..buf_offset + copy_len]);
                 candidates.push(Candidate::with_value(
                     address + buf_offset as u64,
                     flags,
@@ -256,7 +256,7 @@ fn scan_4byte_aligned(buffer: &[u8], pattern: &[u8], alignment: usize) -> Vec<us
         }
         // SSE2 is always available on x86_64
         // SAFETY: SSE2 guaranteed on x86_64
-        return unsafe { scan_4byte_sse2(buffer, needle, alignment) };
+        unsafe { scan_4byte_sse2(buffer, needle, alignment) }
     }
 
     #[cfg(not(target_arch = "x86_64"))]
@@ -343,6 +343,9 @@ unsafe fn scan_4byte_avx2(buffer: &[u8], needle: u32, alignment: usize) -> Vec<u
     let mut offset = 0;
     while offset < end {
         // SAFETY: offset + 32 <= len checked by loop condition; ptr is valid for buffer.
+        // `_mm256_loadu_si256` is the *unaligned* load intrinsic, so the alignment
+        // clippy warns about here doesn't apply.
+        #[allow(clippy::cast_ptr_alignment)]
         let chunk = unsafe { _mm256_loadu_si256(ptr.add(offset).cast::<__m256i>()) };
         let cmp = _mm256_cmpeq_epi32(chunk, needle_vec);
         let mask = _mm256_movemask_epi8(cmp) as u32;
@@ -402,6 +405,9 @@ unsafe fn scan_4byte_sse2(buffer: &[u8], needle: u32, alignment: usize) -> Vec<u
     let mut offset = 0;
     while offset < end {
         // SAFETY: offset + 16 <= len checked by loop condition; ptr is valid for buffer.
+        // `_mm_loadu_si128` is the *unaligned* load intrinsic, so the alignment
+        // clippy warns about here doesn't apply.
+        #[allow(clippy::cast_ptr_alignment)]
         let chunk = unsafe { _mm_loadu_si128(ptr.add(offset).cast::<__m128i>()) };
         let cmp = _mm_cmpeq_epi32(chunk, needle_vec);
         let mask = _mm_movemask_epi8(cmp) as u32;
@@ -423,11 +429,7 @@ unsafe fn scan_4byte_sse2(buffer: &[u8], needle: u32, alignment: usize) -> Vec<u
     // Tail
     while offset + 4 <= len {
         if offset % alignment == 0 {
-            let val = u32::from_le_bytes(
-                buffer[offset..offset + 4]
-                    .try_into()
-                    .expect("4 bytes"),
-            );
+            let val = u32::from_le_bytes(buffer[offset..offset + 4].try_into().expect("4 bytes"));
             if val == needle {
                 results.push(offset);
             }
@@ -496,10 +498,7 @@ pub fn aob_scan(
     let aob_start = std::time::Instant::now();
 
     // Find the first non-wildcard byte for memchr anchoring
-    let anchor = pattern
-        .iter()
-        .enumerate()
-        .find(|(_, b)| b.is_some());
+    let anchor = pattern.iter().enumerate().find(|(_, b)| b.is_some());
 
     let results: Vec<u64> = scan_regions
         .par_iter()
@@ -559,7 +558,8 @@ fn aob_scan_region_chunked(
         let read_len = max_new.min(size - offset);
         let address = region.start + offset as u64;
 
-        let Ok(bytes_read) = mem.read(pid, address, &mut buffer[prefix_len..prefix_len + read_len]) else {
+        let Ok(bytes_read) = mem.read(pid, address, &mut buffer[prefix_len..prefix_len + read_len])
+        else {
             break;
         };
 
@@ -586,7 +586,10 @@ fn aob_scan_region_chunked(
                         Some(found) => {
                             let candidate_start = search_start + found - anchor_offset;
                             if candidate_start + pat_len <= buf.len()
-                                && aob_matches(&buf[candidate_start..candidate_start + pat_len], pattern)
+                                && aob_matches(
+                                    &buf[candidate_start..candidate_start + pat_len],
+                                    pattern,
+                                )
                             {
                                 results.push(base_address + candidate_start as u64);
                             }
@@ -628,20 +631,17 @@ fn aob_scan_region_chunked(
 /// Check if a byte slice matches an AOB pattern (with wildcards).
 fn aob_matches(data: &[u8], pattern: &[Option<u8>]) -> bool {
     data.len() == pattern.len()
-        && data
-            .iter()
-            .zip(pattern.iter())
-            .all(|(d, p)| match p {
-                Some(expected) => *d == *expected,
-                None => true, // wildcard
-            })
+        && data.iter().zip(pattern.iter()).all(|(d, p)| match p {
+            Some(expected) => *d == *expected,
+            None => true, // wildcard
+        })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::process::maps::{MapRegion, Permissions};
     use crate::mem::access::MockMemoryAccess;
+    use crate::process::maps::{MapRegion, Permissions};
 
     /// Helper: create a buffer with a known i32 value at specific offsets.
     fn buffer_with_i32(size: usize, value: i32, offsets: &[usize]) -> Vec<u8> {
@@ -713,7 +713,7 @@ mod tests {
     #[test]
     fn scan_f32_value() {
         let mut buf = vec![0u8; 256];
-        let val = 3.14_f32;
+        let val = 12.5_f32;
         let bytes = val.to_le_bytes();
         buf[100..104].copy_from_slice(&bytes);
         let results = scan_buffer_for_pattern(&buf, &bytes, 4);
@@ -743,11 +743,11 @@ mod tests {
         for offset in [0x100, 0x200, 0x1000] {
             data[offset..offset + 4].copy_from_slice(&100_i32.to_le_bytes());
         }
-        mock.add_region(0x14000_0000, data);
+        mock.add_region(0x0001_4000_0000, data);
 
         let safe_region = MapRegion {
-            start: 0x14000_0000,
-            end: 0x14000_4000,
+            start: 0x0001_4000_0000,
+            end: 0x0001_4000_4000,
             permissions: Permissions {
                 read: true,
                 write: true,
@@ -766,9 +766,9 @@ mod tests {
         assert!(!session.candidates.is_empty());
         // Should find at least our 3 planted values
         let addresses: Vec<u64> = session.candidates.iter().map(|c| c.address).collect();
-        assert!(addresses.contains(&0x14000_0100));
-        assert!(addresses.contains(&0x14000_0200));
-        assert!(addresses.contains(&0x14000_1000));
+        assert!(addresses.contains(&0x0001_4000_0100));
+        assert!(addresses.contains(&0x0001_4000_0200));
+        assert!(addresses.contains(&0x0001_4000_1000));
     }
 
     #[test]
@@ -780,13 +780,18 @@ mod tests {
         // Safe region
         let mut safe_data = vec![0u8; 4096];
         safe_data[0..4].copy_from_slice(&42_i32.to_le_bytes());
-        mock.add_region(0x14000_0000, safe_data);
+        mock.add_region(0x0001_4000_0000, safe_data);
 
         mock.set_maps(vec![
             MapRegion {
                 start: 0x7f00_0000_0000,
                 end: 0x7f00_0000_1000,
-                permissions: Permissions { read: true, write: true, execute: false, shared: true },
+                permissions: Permissions {
+                    read: true,
+                    write: true,
+                    execute: false,
+                    shared: true,
+                },
                 offset: 0,
                 device: "00:06".to_string(),
                 inode: 1111,
@@ -794,9 +799,14 @@ mod tests {
                 safety: RegionSafety::NeverTouch,
             },
             MapRegion {
-                start: 0x14000_0000,
-                end: 0x14000_1000,
-                permissions: Permissions { read: true, write: true, execute: false, shared: false },
+                start: 0x0001_4000_0000,
+                end: 0x0001_4000_1000,
+                permissions: Permissions {
+                    read: true,
+                    write: true,
+                    execute: false,
+                    shared: false,
+                },
                 offset: 0,
                 device: "00:00".to_string(),
                 inode: 0,
@@ -808,7 +818,10 @@ mod tests {
         let session = first_scan(&mock, 100, 42.0, ValueType::I32).unwrap();
         // Should only find the value in the Safe region, not the GPU region
         for c in &session.candidates {
-            assert!(c.address < 0x7f00_0000_0000, "found candidate in GPU region!");
+            assert!(
+                c.address < 0x7f00_0000_0000,
+                "found candidate in GPU region!"
+            );
         }
     }
 
@@ -825,7 +838,12 @@ mod tests {
         mock.set_maps(vec![MapRegion {
             start: 0x1000,
             end: 0x2000,
-            permissions: Permissions { read: true, write: true, execute: false, shared: false },
+            permissions: Permissions {
+                read: true,
+                write: true,
+                execute: false,
+                shared: false,
+            },
             offset: 0,
             device: "00:00".to_string(),
             inode: 0,
@@ -835,10 +853,19 @@ mod tests {
 
         let session = first_scan(&mock, 100, 100.0, ValueType::Auto).unwrap();
         // Should find both the i32 and f32 representations
-        let has_i32 = session.candidates.iter().any(|c| c.types.contains(TypeFlags::I32));
-        let has_f32 = session.candidates.iter().any(|c| c.types.contains(TypeFlags::F32));
-        assert!(has_i32, "should find i32 representation of 100");
-        assert!(has_f32, "should find f32 representation of 100.0");
+        let integer_repr_found = session
+            .candidates
+            .iter()
+            .any(|c| c.types.contains(TypeFlags::I32));
+        let decimal_repr_found = session
+            .candidates
+            .iter()
+            .any(|c| c.types.contains(TypeFlags::F32));
+        assert!(integer_repr_found, "should find i32 representation of 100");
+        assert!(
+            decimal_repr_found,
+            "should find f32 representation of 100.0"
+        );
     }
 
     #[test]
@@ -866,7 +893,10 @@ mod tests {
     #[test]
     fn parse_aob_basic() {
         let pat = parse_aob_pattern("48 89 5C 24 08").unwrap();
-        assert_eq!(pat, vec![Some(0x48), Some(0x89), Some(0x5C), Some(0x24), Some(0x08)]);
+        assert_eq!(
+            pat,
+            vec![Some(0x48), Some(0x89), Some(0x5C), Some(0x24), Some(0x08)]
+        );
     }
 
     #[test]
@@ -889,17 +919,26 @@ mod tests {
 
     #[test]
     fn aob_matches_exact() {
-        assert!(aob_matches(&[0x48, 0x89, 0x5C], &[Some(0x48), Some(0x89), Some(0x5C)]));
+        assert!(aob_matches(
+            &[0x48, 0x89, 0x5C],
+            &[Some(0x48), Some(0x89), Some(0x5C)]
+        ));
     }
 
     #[test]
     fn aob_matches_wildcards() {
-        assert!(aob_matches(&[0x48, 0xFF, 0x5C], &[Some(0x48), None, Some(0x5C)]));
+        assert!(aob_matches(
+            &[0x48, 0xFF, 0x5C],
+            &[Some(0x48), None, Some(0x5C)]
+        ));
     }
 
     #[test]
     fn aob_no_match() {
-        assert!(!aob_matches(&[0x48, 0x89, 0x00], &[Some(0x48), Some(0x89), Some(0x5C)]));
+        assert!(!aob_matches(
+            &[0x48, 0x89, 0x00],
+            &[Some(0x48), Some(0x89), Some(0x5C)]
+        ));
     }
 
     #[test]
@@ -918,10 +957,10 @@ mod tests {
         data[502] = 0x5C;
         data[503] = 0x24;
         data[504] = 0x08;
-        mock.add_region(0x14000_0000, data);
+        mock.add_region(0x0001_4000_0000, data);
         mock.set_maps(vec![MapRegion {
-            start: 0x14000_0000,
-            end: 0x14000_1000,
+            start: 0x0001_4000_0000,
+            end: 0x0001_4000_1000,
             permissions: Permissions {
                 read: true,
                 write: true,
@@ -938,8 +977,8 @@ mod tests {
         let pattern = parse_aob_pattern("48 89 5C 24 08").unwrap();
         let results = aob_scan(&mock, 1, &pattern, false).unwrap();
         assert_eq!(results.len(), 2);
-        assert!(results.contains(&(0x14000_0000 + 100)));
-        assert!(results.contains(&(0x14000_0000 + 500)));
+        assert!(results.contains(&(0x0001_4000_0000 + 100)));
+        assert!(results.contains(&(0x0001_4000_0000 + 500)));
     }
 
     #[test]
@@ -956,8 +995,16 @@ mod tests {
         mock.set_maps(vec![MapRegion {
             start: 0x1000,
             end: 0x1100,
-            permissions: Permissions { read: true, write: true, execute: false, shared: false },
-            offset: 0, device: "00:00".to_string(), inode: 0, pathname: String::new(),
+            permissions: Permissions {
+                read: true,
+                write: true,
+                execute: false,
+                shared: false,
+            },
+            offset: 0,
+            device: "00:00".to_string(),
+            inode: 0,
+            pathname: String::new(),
             safety: RegionSafety::Safe,
         }]);
 
@@ -976,8 +1023,15 @@ mod tests {
         mock.set_maps(vec![MapRegion {
             start: 0x1000,
             end: 0x1100,
-            permissions: Permissions { read: true, write: true, execute: false, shared: true },
-            offset: 0, device: "00:06".to_string(), inode: 1111,
+            permissions: Permissions {
+                read: true,
+                write: true,
+                execute: false,
+                shared: true,
+            },
+            offset: 0,
+            device: "00:06".to_string(),
+            inode: 1111,
             pathname: "/dev/nvidia0".to_string(),
             safety: RegionSafety::NeverTouch,
         }]);
@@ -1010,8 +1064,16 @@ mod tests {
         let region = MapRegion {
             start: 0x5000,
             end: 0x5080,
-            permissions: Permissions { read: true, write: true, execute: false, shared: false },
-            offset: 0, device: "00:00".to_string(), inode: 0, pathname: String::new(),
+            permissions: Permissions {
+                read: true,
+                write: true,
+                execute: false,
+                shared: false,
+            },
+            offset: 0,
+            device: "00:00".to_string(),
+            inode: 0,
+            pathname: String::new(),
             safety: RegionSafety::Safe,
         };
 
@@ -1019,8 +1081,18 @@ mod tests {
         let anchor = pattern.iter().enumerate().find(|(_, b)| b.is_some());
         let results = aob_scan_region_chunked(&mock, 1, &region, &pattern, anchor, 32).unwrap();
 
-        assert_eq!(results.len(), 2, "should find both the in-chunk and boundary-spanning match");
-        assert!(results.contains(&(0x5000 + 10)), "should find match at offset 10");
-        assert!(results.contains(&(0x5000 + 30)), "should find match at offset 30 (spans chunk boundary)");
+        assert_eq!(
+            results.len(),
+            2,
+            "should find both the in-chunk and boundary-spanning match"
+        );
+        assert!(
+            results.contains(&(0x5000 + 10)),
+            "should find match at offset 10"
+        );
+        assert!(
+            results.contains(&(0x5000 + 30)),
+            "should find match at offset 30 (spans chunk boundary)"
+        );
     }
 }

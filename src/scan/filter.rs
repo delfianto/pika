@@ -1,5 +1,5 @@
-use crate::scan::candidate::{Candidate, TypeFlags, ValueType, encode_value_patterns};
 use crate::mem::access::MemoryAccess;
+use crate::scan::candidate::{Candidate, TypeFlags, ValueType, encode_value_patterns};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
@@ -78,12 +78,14 @@ pub fn filter_candidates(
         let candidate = candidates[i];
 
         // Determine read width from the candidate's remaining types
-        let read_size =
-            if candidate.types.intersects(TypeFlags::I64 | TypeFlags::U64 | TypeFlags::F64) {
-                8
-            } else {
-                4
-            };
+        let read_size = if candidate
+            .types
+            .intersects(TypeFlags::I64 | TypeFlags::U64 | TypeFlags::F64)
+        {
+            8
+        } else {
+            4
+        };
 
         let mut current_bytes = [0u8; 8];
         if mem
@@ -95,20 +97,24 @@ pub fn filter_candidates(
         }
 
         let keep = match mode {
-            FilterMode::Exact => {
-                check_exact_match(&current_bytes, &patterns, candidate.types)
-            }
-            FilterMode::NotEqual => {
-                !check_exact_match(&current_bytes, &patterns, candidate.types)
-            }
-            FilterMode::Increased => {
-                check_comparison(&current_bytes, &candidate.last_value, candidate.types, |a, b| a > b)
-            }
-            FilterMode::Decreased => {
-                check_comparison(&current_bytes, &candidate.last_value, candidate.types, |a, b| a < b)
-            }
+            FilterMode::Exact => check_exact_match(&current_bytes, &patterns, candidate.types),
+            FilterMode::NotEqual => !check_exact_match(&current_bytes, &patterns, candidate.types),
+            FilterMode::Increased => check_comparison(
+                &current_bytes,
+                &candidate.last_value,
+                candidate.types,
+                |a, b| a > b,
+            ),
+            FilterMode::Decreased => check_comparison(
+                &current_bytes,
+                &candidate.last_value,
+                candidate.types,
+                |a, b| a < b,
+            ),
             FilterMode::Changed => current_bytes[..read_size] != candidate.last_value[..read_size],
-            FilterMode::Unchanged => current_bytes[..read_size] == candidate.last_value[..read_size],
+            FilterMode::Unchanged => {
+                current_bytes[..read_size] == candidate.last_value[..read_size]
+            }
         };
 
         if keep {
@@ -229,8 +235,8 @@ fn check_comparison(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::process::maps::{MapRegion, Permissions, RegionSafety};
     use crate::mem::access::MockMemoryAccess;
+    use crate::process::maps::{MapRegion, Permissions, RegionSafety};
 
     fn setup_mock_with_values(values: &[(u64, i32)]) -> MockMemoryAccess {
         let mock = MockMemoryAccess::new(1);
@@ -274,12 +280,8 @@ mod tests {
 
     #[test]
     fn filter_exact_match() {
-        let mock = setup_mock_with_values(&[
-            (0x1000, 95),
-            (0x1004, 200),
-            (0x1008, 95),
-            (0x100C, 300),
-        ]);
+        let mock =
+            setup_mock_with_values(&[(0x1000, 95), (0x1004, 200), (0x1008, 95), (0x100C, 300)]);
 
         let mut candidates = vec![
             make_candidate(0x1000, 100),
@@ -288,9 +290,15 @@ mod tests {
             make_candidate(0x100C, 100),
         ];
 
-        let retained =
-            filter_candidates(&mock, 1, &mut candidates, 95.0, ValueType::I32, FilterMode::Exact)
-                .unwrap();
+        let retained = filter_candidates(
+            &mock,
+            1,
+            &mut candidates,
+            95.0,
+            ValueType::I32,
+            FilterMode::Exact,
+        )
+        .unwrap();
         assert_eq!(retained, 2);
         assert_eq!(candidates[0].address, 0x1000);
         assert_eq!(candidates[1].address, 0x1008);
@@ -298,11 +306,7 @@ mod tests {
 
     #[test]
     fn filter_not_equal() {
-        let mock = setup_mock_with_values(&[
-            (0x1000, 95),
-            (0x1004, 200),
-            (0x1008, 95),
-        ]);
+        let mock = setup_mock_with_values(&[(0x1000, 95), (0x1004, 200), (0x1008, 95)]);
 
         let mut candidates = vec![
             make_candidate(0x1000, 100),
@@ -311,7 +315,12 @@ mod tests {
         ];
 
         let retained = filter_candidates(
-            &mock, 1, &mut candidates, 95.0, ValueType::I32, FilterMode::NotEqual,
+            &mock,
+            1,
+            &mut candidates,
+            95.0,
+            ValueType::I32,
+            FilterMode::NotEqual,
         )
         .unwrap();
         assert_eq!(retained, 1);
@@ -333,7 +342,12 @@ mod tests {
         ];
 
         let retained = filter_candidates(
-            &mock, 1, &mut candidates, 0.0, ValueType::I32, FilterMode::Increased,
+            &mock,
+            1,
+            &mut candidates,
+            0.0,
+            ValueType::I32,
+            FilterMode::Increased,
         )
         .unwrap();
         assert_eq!(retained, 1);
@@ -355,7 +369,12 @@ mod tests {
         ];
 
         let retained = filter_candidates(
-            &mock, 1, &mut candidates, 0.0, ValueType::I32, FilterMode::Decreased,
+            &mock,
+            1,
+            &mut candidates,
+            0.0,
+            ValueType::I32,
+            FilterMode::Decreased,
         )
         .unwrap();
         assert_eq!(retained, 1);
@@ -377,7 +396,12 @@ mod tests {
         ];
 
         let retained = filter_candidates(
-            &mock, 1, &mut candidates, 0.0, ValueType::I32, FilterMode::Changed,
+            &mock,
+            1,
+            &mut candidates,
+            0.0,
+            ValueType::I32,
+            FilterMode::Changed,
         )
         .unwrap();
         assert_eq!(retained, 2);
@@ -400,7 +424,12 @@ mod tests {
         ];
 
         let retained = filter_candidates(
-            &mock, 1, &mut candidates, 0.0, ValueType::I32, FilterMode::Unchanged,
+            &mock,
+            1,
+            &mut candidates,
+            0.0,
+            ValueType::I32,
+            FilterMode::Unchanged,
         )
         .unwrap();
         assert_eq!(retained, 1);
@@ -409,11 +438,7 @@ mod tests {
 
     #[test]
     fn filter_changed_plus_unchanged_is_all() {
-        let mock = setup_mock_with_values(&[
-            (0x1000, 150),
-            (0x1004, 100),
-            (0x1008, 50),
-        ]);
+        let mock = setup_mock_with_values(&[(0x1000, 150), (0x1004, 100), (0x1008, 50)]);
 
         let base_candidates = vec![
             make_candidate(0x1000, 100),
@@ -423,13 +448,23 @@ mod tests {
 
         let mut changed = base_candidates.clone();
         let n_changed = filter_candidates(
-            &mock, 1, &mut changed, 0.0, ValueType::I32, FilterMode::Changed,
+            &mock,
+            1,
+            &mut changed,
+            0.0,
+            ValueType::I32,
+            FilterMode::Changed,
         )
         .unwrap();
 
         let mut unchanged = base_candidates.clone();
         let n_unchanged = filter_candidates(
-            &mock, 1, &mut unchanged, 0.0, ValueType::I32, FilterMode::Unchanged,
+            &mock,
+            1,
+            &mut unchanged,
+            0.0,
+            ValueType::I32,
+            FilterMode::Unchanged,
         )
         .unwrap();
 
@@ -442,7 +477,12 @@ mod tests {
 
         let mut candidates = vec![make_candidate(0x1000, 100)];
         filter_candidates(
-            &mock, 1, &mut candidates, 0.0, ValueType::I32, FilterMode::Changed,
+            &mock,
+            1,
+            &mut candidates,
+            0.0,
+            ValueType::I32,
+            FilterMode::Changed,
         )
         .unwrap();
 
@@ -477,7 +517,12 @@ mod tests {
         ];
 
         let retained = filter_candidates(
-            &mock, 1, &mut candidates, 0.0, ValueType::I32, FilterMode::Exact,
+            &mock,
+            1,
+            &mut candidates,
+            0.0,
+            ValueType::I32,
+            FilterMode::Exact,
         )
         .unwrap();
         assert_eq!(retained, 1);
@@ -496,7 +541,12 @@ mod tests {
         }];
 
         filter_candidates(
-            &mock, 1, &mut candidates, 100.0, ValueType::Auto, FilterMode::Exact,
+            &mock,
+            1,
+            &mut candidates,
+            100.0,
+            ValueType::Auto,
+            FilterMode::Exact,
         )
         .unwrap();
 
@@ -507,12 +557,30 @@ mod tests {
 
     #[test]
     fn filter_mode_parsing() {
-        assert_eq!(FilterMode::from_str_loose("exact").unwrap(), FilterMode::Exact);
-        assert_eq!(FilterMode::from_str_loose("increased").unwrap(), FilterMode::Increased);
-        assert_eq!(FilterMode::from_str_loose("inc").unwrap(), FilterMode::Increased);
-        assert_eq!(FilterMode::from_str_loose(">").unwrap(), FilterMode::Increased);
-        assert_eq!(FilterMode::from_str_loose("not-equal").unwrap(), FilterMode::NotEqual);
-        assert_eq!(FilterMode::from_str_loose("unchanged").unwrap(), FilterMode::Unchanged);
+        assert_eq!(
+            FilterMode::from_str_loose("exact").unwrap(),
+            FilterMode::Exact
+        );
+        assert_eq!(
+            FilterMode::from_str_loose("increased").unwrap(),
+            FilterMode::Increased
+        );
+        assert_eq!(
+            FilterMode::from_str_loose("inc").unwrap(),
+            FilterMode::Increased
+        );
+        assert_eq!(
+            FilterMode::from_str_loose(">").unwrap(),
+            FilterMode::Increased
+        );
+        assert_eq!(
+            FilterMode::from_str_loose("not-equal").unwrap(),
+            FilterMode::NotEqual
+        );
+        assert_eq!(
+            FilterMode::from_str_loose("unchanged").unwrap(),
+            FilterMode::Unchanged
+        );
         assert!(FilterMode::from_str_loose("bogus").is_err());
     }
 
@@ -527,7 +595,12 @@ mod tests {
         }];
 
         filter_candidates(
-            &mock, 1, &mut candidates, 42.0, ValueType::I32, FilterMode::Exact,
+            &mock,
+            1,
+            &mut candidates,
+            42.0,
+            ValueType::I32,
+            FilterMode::Exact,
         )
         .unwrap();
         assert_eq!(candidates[0].confidence, 6);

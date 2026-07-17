@@ -16,11 +16,7 @@ impl RpcClient {
     }
 
     /// Send a JSON-RPC request and return the response.
-    pub async fn call(
-        &self,
-        method: &str,
-        params: serde_json::Value,
-    ) -> Result<serde_json::Value> {
+    pub async fn call(&self, method: &str, params: serde_json::Value) -> Result<serde_json::Value> {
         let stream = UnixStream::connect(&self.socket_path)
             .await
             .with_context(|| {
@@ -67,8 +63,8 @@ impl RpcClient {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::process::maps::{MapRegion, Permissions, RegionSafety};
     use crate::mem::access::MockMemoryAccess;
+    use crate::process::maps::{MapRegion, Permissions, RegionSafety};
     use crate::rpc::server::serve_unix_socket;
     use std::sync::Arc;
 
@@ -135,10 +131,10 @@ mod tests {
         let mut data = vec![0u8; 4096];
         // Plant value 100 at offset 0x100
         data[0x100..0x104].copy_from_slice(&100_i32.to_le_bytes());
-        mock.add_region(0x14000_0000, data);
+        mock.add_region(0x0001_4000_0000, data);
         mock.set_maps(vec![MapRegion {
-            start: 0x14000_0000,
-            end: 0x14000_1000,
+            start: 0x0001_4000_0000,
+            end: 0x0001_4000_1000,
             permissions: Permissions {
                 read: true,
                 write: true,

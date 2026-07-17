@@ -25,7 +25,7 @@ pub trait MemoryAccess: Send + Sync {
 #[cfg(target_os = "linux")]
 pub mod linux {
     use super::*;
-    use nix::sys::uio::{process_vm_readv, process_vm_writev, RemoteIoVec};
+    use nix::sys::uio::{RemoteIoVec, process_vm_readv, process_vm_writev};
     use nix::unistd::Pid;
     use std::io::IoSliceMut;
 
@@ -111,9 +111,7 @@ impl MockMemoryAccess {
                 return;
             }
         }
-        panic!(
-            "write_value: address {address:#x} not within any mock region"
-        );
+        panic!("write_value: address {address:#x} not within any mock region");
     }
 
     /// Read a typed value from a specific address (convenience for test assertions).
@@ -128,7 +126,10 @@ impl MockMemoryAccess {
 impl MemoryAccess for MockMemoryAccess {
     fn read(&self, pid: u32, address: u64, buffer: &mut [u8]) -> Result<usize> {
         if pid != self.pid {
-            anyhow::bail!("ESRCH: mock process {pid} not found (expected {})", self.pid);
+            anyhow::bail!(
+                "ESRCH: mock process {pid} not found (expected {})",
+                self.pid
+            );
         }
         let regions = self.regions.read().unwrap();
         let mut bytes_read = 0usize;
@@ -230,9 +231,9 @@ mod tests {
     #[test]
     fn mock_write_float() {
         let mock = make_mock();
-        mock.write_value::<f32>(0x1000, 3.14);
+        mock.write_value::<f32>(0x1000, 12.5);
         let val: f32 = mock.read_value(0x1000);
-        assert!((val - 3.14).abs() < 1e-6);
+        assert!((val - 12.5).abs() < 1e-6);
     }
 
     #[test]

@@ -24,6 +24,10 @@ pub struct PatchRecordJson {
     pub description: String,
 }
 
+/// Pluggable code-write function for testing on non-Linux.
+#[cfg(test)]
+type CodeWriter = Box<dyn Fn(u32, u64, &[u8]) -> Result<usize> + Send + Sync>;
+
 /// Manages code patches applied to a target process.
 ///
 /// Uses `/proc/pid/mem` to write to executable pages (r-xp) without stopping
@@ -31,9 +35,8 @@ pub struct PatchRecordJson {
 pub struct PatchManager {
     mem: Arc<dyn MemoryAccess>,
     patches: DashMap<u64, PatchRecord>,
-    /// Pluggable code-write function for testing on non-Linux.
     #[cfg(test)]
-    writer: Option<Box<dyn Fn(u32, u64, &[u8]) -> Result<usize> + Send + Sync>>,
+    writer: Option<CodeWriter>,
 }
 
 impl PatchManager {
@@ -48,10 +51,7 @@ impl PatchManager {
 
     /// Create a PatchManager with a custom code-write function (for testing).
     #[cfg(test)]
-    pub fn new_with_writer(
-        mem: Arc<dyn MemoryAccess>,
-        writer: Box<dyn Fn(u32, u64, &[u8]) -> Result<usize> + Send + Sync>,
-    ) -> Self {
+    pub fn new_with_writer(mem: Arc<dyn MemoryAccess>, writer: CodeWriter) -> Self {
         Self {
             mem,
             patches: DashMap::new(),
@@ -80,10 +80,11 @@ impl PatchManager {
             Some(s) => s,
             None => {
                 // Auto-detect instruction length via disassembly
-                let insns = crate::mem::disassemble::disassemble_at(self.mem.as_ref(), pid, address, 1)?;
-                let insn = insns
-                    .first()
-                    .ok_or_else(|| anyhow::anyhow!("failed to disassemble instruction at {address:#x}"))?;
+                let insns =
+                    crate::mem::disassemble::disassemble_at(self.mem.as_ref(), pid, address, 1)?;
+                let insn = insns.first().ok_or_else(|| {
+                    anyhow::anyhow!("failed to disassemble instruction at {address:#x}")
+                })?;
                 // Byte count from hex string: "48 89 5c" -> 3 tokens -> 3 bytes
                 insn.bytes.split_whitespace().count()
             }
@@ -140,7 +141,10 @@ impl PatchManager {
         let read = self.mem.read(pid, address, &mut original)?;
         original.truncate(read);
         if read < bytes.len() {
-            anyhow::bail!("could only read {read}/{} bytes at {address:#x}", bytes.len());
+            anyhow::bail!(
+                "could only read {read}/{} bytes at {address:#x}",
+                bytes.len()
+            );
         }
 
         self.do_write_code(pid, address, bytes)?;
@@ -308,7 +312,9 @@ pub fn hex_encode(bytes: &[u8]) -> String {
 /// Decode a space-separated hex string into bytes.
 pub fn hex_decode(hex: &str) -> Result<Vec<u8>> {
     hex.split_whitespace()
-        .map(|s| u8::from_str_radix(s, 16).map_err(|e| anyhow::anyhow!("invalid hex byte '{s}': {e}")))
+        .map(|s| {
+            u8::from_str_radix(s, 16).map_err(|e| anyhow::anyhow!("invalid hex byte '{s}': {e}"))
+        })
         .collect()
 }
 
@@ -330,24 +336,22 @@ mod tests {
         for b in &mut code[3..16] {
             *b = 0x90;
         }
-        mock.add_region(0x14000_0000, code);
-        mock.set_maps(vec![
-            MapRegion {
-                start: 0x14000_0000,
-                end: 0x14000_1000,
-                permissions: Permissions {
-                    read: true,
-                    write: false,
-                    execute: true,
-                    shared: false,
-                },
-                offset: 0,
-                device: "00:00".to_string(),
-                inode: 0,
-                pathname: "game.exe".to_string(),
-                safety: RegionSafety::ReadOnly,
+        mock.add_region(0x0001_4000_0000, code);
+        mock.set_maps(vec![MapRegion {
+            start: 0x0001_4000_0000,
+            end: 0x0001_4000_1000,
+            permissions: Permissions {
+                read: true,
+                write: false,
+                execute: true,
+                shared: false,
             },
-        ]);
+            offset: 0,
+            device: "00:00".to_string(),
+            inode: 0,
+            pathname: "game.exe".to_string(),
+            safety: RegionSafety::ReadOnly,
+        }]);
         Arc::new(mock)
     }
 
@@ -375,7 +379,7 @@ mod tests {
     #[test]
     fn validate_accepts_executable_region() {
         let mock = mock_with_code_region();
-        let result = validate_code_address(&*mock, 1, 0x14000_0000, 3);
+        let result = validate_code_address(&*mock, 1, 0x0001_4000_0000, 3);
         assert!(result.is_ok());
     }
 
@@ -392,7 +396,12 @@ mod tests {
         let mock = mock_with_code_region();
         let result = validate_code_address(&*mock, 1, 0xDEAD_0000, 4);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("not in any mapped region"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("not in any mapped region")
+        );
     }
 
     #[test]
@@ -401,20 +410,22 @@ mod tests {
         let mock_clone = mock.clone();
 
         // Mock writer: delegate to MockMemoryAccess.write()
-        let writer = Box::new(move |pid: u32, address: u64, data: &[u8]| -> Result<usize> {
-            mock_clone.write(pid, address, data)
-        });
+        let writer = Box::new(
+            move |pid: u32, address: u64, data: &[u8]| -> Result<usize> {
+                mock_clone.write(pid, address, data)
+            },
+        );
 
         let manager = PatchManager::new_with_writer(mock.clone(), writer);
         // NOP 3 bytes at 0x14000_0000
-        let record = manager.nop_at(1, 0x14000_0000, Some(3)).unwrap();
+        let record = manager.nop_at(1, 0x0001_4000_0000, Some(3)).unwrap();
         assert_eq!(record.original_bytes, vec![0x89, 0x48, 0x1c]);
         assert_eq!(record.patched_bytes, vec![0x90, 0x90, 0x90]);
         assert_eq!(record.description, "nop 3 bytes");
 
         // Verify the mock memory was actually written
         let mut buf = [0u8; 3];
-        mock.read(1, 0x14000_0000, &mut buf).unwrap();
+        mock.read(1, 0x0001_4000_0000, &mut buf).unwrap();
         assert_eq!(buf, [0x90, 0x90, 0x90]);
     }
 
@@ -423,26 +434,30 @@ mod tests {
         let mock = mock_with_code_region();
         let mock_clone = mock.clone();
 
-        let writer = Box::new(move |pid: u32, address: u64, data: &[u8]| -> Result<usize> {
-            mock_clone.write(pid, address, data)
-        });
+        let writer = Box::new(
+            move |pid: u32, address: u64, data: &[u8]| -> Result<usize> {
+                mock_clone.write(pid, address, data)
+            },
+        );
 
         let manager = PatchManager::new_with_writer(mock.clone(), writer);
 
         // Patch 2 bytes
-        let record = manager.patch_at(1, 0x14000_0000, &[0xEB, 0x05]).unwrap();
+        let record = manager
+            .patch_at(1, 0x0001_4000_0000, &[0xEB, 0x05])
+            .unwrap();
         assert_eq!(record.original_bytes, vec![0x89, 0x48]);
 
         // Verify patched
         let mut buf = [0u8; 2];
-        mock.read(1, 0x14000_0000, &mut buf).unwrap();
+        mock.read(1, 0x0001_4000_0000, &mut buf).unwrap();
         assert_eq!(buf, [0xEB, 0x05]);
 
         // Restore
-        manager.restore_at(1, 0x14000_0000).unwrap();
+        manager.restore_at(1, 0x0001_4000_0000).unwrap();
 
         // Verify restored
-        mock.read(1, 0x14000_0000, &mut buf).unwrap();
+        mock.read(1, 0x0001_4000_0000, &mut buf).unwrap();
         assert_eq!(buf, [0x89, 0x48]);
     }
 
@@ -451,12 +466,14 @@ mod tests {
         let mock = mock_with_code_region();
         let mock_clone = mock.clone();
 
-        let writer = Box::new(move |pid: u32, address: u64, data: &[u8]| -> Result<usize> {
-            mock_clone.write(pid, address, data)
-        });
+        let writer = Box::new(
+            move |pid: u32, address: u64, data: &[u8]| -> Result<usize> {
+                mock_clone.write(pid, address, data)
+            },
+        );
 
         let manager = PatchManager::new_with_writer(mock, writer);
-        manager.nop_at(1, 0x14000_0000, Some(3)).unwrap();
+        manager.nop_at(1, 0x0001_4000_0000, Some(3)).unwrap();
 
         let list = manager.list();
         assert_eq!(list.len(), 1);

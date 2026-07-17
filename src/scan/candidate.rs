@@ -285,10 +285,16 @@ mod tests {
         let patterns = encode_value_patterns(100.0);
         // Should have: i32|u32 pattern (4 bytes), i64|u64 pattern (8 bytes)
         // f32(100.0) = 0x42c80000, which differs from i32(100) = 0x64000000
-        assert!(patterns.len() >= 2, "expected at least 2 patterns, got {}", patterns.len());
+        assert!(
+            patterns.len() >= 2,
+            "expected at least 2 patterns, got {}",
+            patterns.len()
+        );
 
         // Check i32 pattern
-        let i32_pat = patterns.iter().find(|(_, f, sz)| f.contains(TypeFlags::I32) && *sz == 4);
+        let i32_pat = patterns
+            .iter()
+            .find(|(_, f, sz)| f.contains(TypeFlags::I32) && *sz == 4);
         assert!(i32_pat.is_some());
         let (bytes, flags, _) = i32_pat.unwrap();
         assert_eq!(bytes[..4], 100_i32.to_le_bytes());
@@ -313,14 +319,19 @@ mod tests {
         // i32(0) and f32(0.0) have the same byte pattern: all zeros
         // Should deduplicate
         let four_byte = patterns.iter().filter(|(_, _, sz)| *sz == 4).count();
-        assert_eq!(four_byte, 1, "0 as i32 and f32 are same bytes, should deduplicate");
+        assert_eq!(
+            four_byte, 1,
+            "0 as i32 and f32 are same bytes, should deduplicate"
+        );
     }
 
     #[test]
     fn encode_negative() {
         let patterns = encode_value_patterns(-42.0);
         // i32(-42) should NOT have U32 flag
-        let i32_pat = patterns.iter().find(|(_, f, sz)| f.contains(TypeFlags::I32) && *sz == 4);
+        let i32_pat = patterns
+            .iter()
+            .find(|(_, f, sz)| f.contains(TypeFlags::I32) && *sz == 4);
         assert!(i32_pat.is_some());
         let (_, flags, _) = i32_pat.unwrap();
         assert!(!flags.contains(TypeFlags::U32));
@@ -331,10 +342,14 @@ mod tests {
         let val = 3_000_000_000.0; // exceeds i32 max
         let patterns = encode_value_patterns(val);
         // Should NOT have i32 pattern (value > i32::MAX)
-        let has_i32 = patterns.iter().any(|(_, f, sz)| f.contains(TypeFlags::I32) && *sz == 4);
+        let has_i32 = patterns
+            .iter()
+            .any(|(_, f, sz)| f.contains(TypeFlags::I32) && *sz == 4);
         assert!(!has_i32, "3 billion should not fit in i32");
         // Should have i64/u64 pattern
-        let has_i64 = patterns.iter().any(|(_, f, sz)| f.contains(TypeFlags::I64) && *sz == 8);
+        let has_i64 = patterns
+            .iter()
+            .any(|(_, f, sz)| f.contains(TypeFlags::I64) && *sz == 8);
         assert!(has_i64);
     }
 

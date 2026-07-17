@@ -45,7 +45,12 @@ pub fn disassemble_at(
     Ok(insns
         .iter()
         .map(|i| {
-            let bytes_hex: String = i.bytes().iter().map(|b| format!("{b:02x}")).collect::<Vec<_>>().join(" ");
+            let bytes_hex: String = i
+                .bytes()
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect::<Vec<_>>()
+                .join(" ");
             Instruction {
                 address: format!("{:#x}", i.address()),
                 bytes: bytes_hex,
