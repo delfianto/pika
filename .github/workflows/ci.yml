@@ -1,3 +1,6 @@
+# CI for justfile-rust baseline. Source of truth: delfianto/ci-rust + JUST.md
+# Gates: format --check-only · lint · cargo build --all-targets · test
+
 name: ci
 
 on:
@@ -24,8 +27,14 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: fmt
-        run: just fmt-check
+      # Optional — only for crates that need native libs at build time:
+      # - name: System build dependencies
+      #   run: |
+      #     sudo apt-get update
+      #     sudo apt-get install -y <packages>
+
+      - name: format
+        run: just format --check-only
 
       - name: lint
         run: just lint
@@ -35,4 +44,3 @@ jobs:
 
       - name: test
         run: just test
-
