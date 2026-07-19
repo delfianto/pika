@@ -1,16 +1,16 @@
-# Pika - Non-stopping memory scanner for Wine/Proton games
+# pika — baseline + daemon helpers
 
-set dotenv-load := false
+bins    := "pika"
+bin_dir := env_var("HOME") / ".local/bin"
+sys_dir := "/usr/local/bin"
 
 export RUST_BACKTRACE := "1"
-
-install_dir := env("HOME") / ".local/bin"
 
 # List available recipes
 default:
     @just --list
 
-# Build in release mode
+# Build release binaries
 build:
     cargo build --release
 
@@ -18,7 +18,7 @@ build:
 build-debug:
     cargo build
 
-# Run all tests
+# Run unit/integration tests that do not need live external services
 test:
     cargo test
 
@@ -30,34 +30,74 @@ test-verbose:
 test-one name:
     cargo test {{name}} -- --nocapture
 
-# Full code quality check: clippy + tests + format check
-check: lint test
-    @echo "All checks passed."
-
-# Run clippy lints
-lint:
-    cargo clippy -- -D warnings
-
-# Check formatting (don't modify)
-fmt-check:
-    cargo fmt -- --check
-
-# Auto-format code
+# Auto-format the tree
 fmt:
-    cargo fmt
+    cargo fmt --all
 
-# Build release and install to ~/.local/bin
-install: build
-    @mkdir -p {{install_dir}}
-    cp target/release/pika {{install_dir}}/pika
-    @echo "Installed pika to {{install_dir}}/pika"
+# Check formatting (CI gate)
+fmt-check:
+    cargo fmt --all -- --check
 
-# Uninstall from ~/.local/bin
-uninstall:
-    rm -f {{install_dir}}/pika
-    @echo "Removed pika from {{install_dir}}"
+# Lint — warnings denied (CI gate)
+lint:
+    cargo clippy --all-targets --all-features -- -D warnings
 
-# Clean build artifacts
+# Full local gate, mirrors CI (fmt + clippy + tests)
+check: fmt-check lint test
+
+# Compress every release binary with upx (skips a binary if already packed)
+compress: build
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! command -v upx >/dev/null 2>&1; then
+        echo "compress: upx not found in PATH" >&2
+        exit 1
+    fi
+    for b in {{bins}}; do
+        path="target/release/$b"
+        if [ ! -f "$path" ]; then
+            echo "compress: missing $path (is bins= correct?)" >&2
+            exit 1
+        fi
+        upx -t "$path" >/dev/null 2>&1 || upx --best --lzma "$path"
+        echo "compressed $path"
+    done
+
+# Install into ~/.local/bin (default) or /usr/local/bin (--system, via sudo)
+install *flags: compress
+    #!/usr/bin/env bash
+    set -euo pipefail
+    dir="{{bin_dir}}"
+    sudo=""
+    for f in {{flags}}; do
+        case "$f" in
+            --system) dir="{{sys_dir}}"; sudo="sudo" ;;
+            *) echo "install: unknown flag '$f' (only --system is supported)" >&2; exit 1 ;;
+        esac
+    done
+    for b in {{bins}}; do
+        $sudo install -Dm755 "target/release/$b" "$dir/$b"
+        echo "installed $dir/$b"
+    done
+
+# Remove installed binaries (pass --system for /usr/local/bin via sudo)
+uninstall *flags:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    dir="{{bin_dir}}"
+    sudo=""
+    for f in {{flags}}; do
+        case "$f" in
+            --system) dir="{{sys_dir}}"; sudo="sudo" ;;
+            *) echo "uninstall: unknown flag '$f' (only --system is supported)" >&2; exit 1 ;;
+        esac
+    done
+    for b in {{bins}}; do
+        $sudo rm -f "$dir/$b"
+        echo "removed $dir/$b"
+    done
+
+# Remove build artifacts
 clean:
     cargo clean
 
