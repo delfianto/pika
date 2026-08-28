@@ -357,7 +357,7 @@ unsafe fn scan_4byte_avx2(buffer: &[u8], needle: u32, alignment: usize) -> Vec<u
                 if mask & lane_bits == lane_bits {
                     let candidate_offset = offset + (lane as usize) * 4;
                     // Only report if aligned
-                    if candidate_offset % alignment == 0 {
+                    if candidate_offset.is_multiple_of(alignment) {
                         results.push(candidate_offset);
                     }
                 }
@@ -417,7 +417,7 @@ unsafe fn scan_4byte_sse2(buffer: &[u8], needle: u32, alignment: usize) -> Vec<u
                 let lane_bits = 0xFu32 << (lane * 4);
                 if mask & lane_bits == lane_bits {
                     let candidate_offset = offset + (lane as usize) * 4;
-                    if candidate_offset % alignment == 0 {
+                    if candidate_offset.is_multiple_of(alignment) {
                         results.push(candidate_offset);
                     }
                 }
