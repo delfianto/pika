@@ -211,14 +211,14 @@ impl PatchManager {
     pub fn restore_all(&self) {
         let keys: Vec<u64> = self.patches.iter().map(|e| *e.key()).collect();
         for addr in keys {
-            if let Some((_, record)) = self.patches.remove(&addr) {
-                if let Err(e) = write_code(record.pid, record.address, &record.original_bytes) {
-                    tracing::warn!(
-                        address = format_args!("{:#x}", record.address),
-                        error = %e,
-                        "failed to restore patch on cleanup"
-                    );
-                }
+            if let Some((_, record)) = self.patches.remove(&addr)
+                && let Err(e) = write_code(record.pid, record.address, &record.original_bytes)
+            {
+                tracing::warn!(
+                    address = format_args!("{:#x}", record.address),
+                    error = %e,
+                    "failed to restore patch on cleanup"
+                );
             }
         }
     }

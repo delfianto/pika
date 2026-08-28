@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 description = "Non-stopping memory scanner for Wine/Proton games"
 license = "GPL-3.0-only"
-rust-version = "1.85"
+rust-version = "1.98.0"
 
 [[bin]]
 name = "pika"
@@ -18,7 +18,7 @@ clap = { version = "4", features = ["derive"] }
 crossterm = "0.29"
 dashmap = "6"
 memchr = "2"
-nid = "3"
+nid = "5"
 ratatui = "0.30"
 rayon = "1"
 serde = { version = "1", features = ["derive"] }
