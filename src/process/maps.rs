@@ -374,7 +374,7 @@ mod tests {
         assert_eq!(region.end, 0x1_5000_0000);
         assert!(region.permissions.write);
         assert!(!region.permissions.shared);
-        assert!(region.pathname.is_empty());
+        assert_eq!(region.pathname, "");
         assert_eq!(region.safety, RegionSafety::Safe);
     }
 
@@ -820,7 +820,7 @@ mod tests {
     #[test]
     fn parse_maps_empty_input() {
         let regions = parse_maps("").unwrap();
-        assert!(regions.is_empty());
+        assert_eq!(regions, [] as [crate::process::maps::MapRegion; 0]);
     }
 
     #[test]

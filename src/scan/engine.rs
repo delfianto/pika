@@ -673,7 +673,7 @@ mod tests {
     fn scan_4byte_no_match() {
         let buf = vec![0u8; 1024];
         let results = scan_buffer_for_pattern(&buf, &42_i32.to_le_bytes(), 4);
-        assert!(results.is_empty());
+        assert_eq!(results, [] as [usize; 0]);
     }
 
     #[test]
@@ -763,7 +763,10 @@ mod tests {
         mock.set_maps(vec![safe_region]);
 
         let session = first_scan(&mock, 100, 100.0, ValueType::I32).unwrap();
-        assert!(!session.candidates.is_empty());
+        assert_ne!(
+            session.candidates,
+            [] as [crate::scan::candidate::Candidate; 0]
+        );
         // Should find at least our 3 planted values
         let addresses: Vec<u64> = session.candidates.iter().map(|c| c.address).collect();
         assert!(addresses.contains(&0x0001_4000_0100));

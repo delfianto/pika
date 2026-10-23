@@ -343,7 +343,7 @@ mod tests {
     fn extract_modules_skips_anonymous() {
         let regions = vec![make_region(0x1000, 0x2000, "", RegionSafety::Safe)];
         let modules = extract_module_bases(&regions);
-        assert!(modules.is_empty());
+        assert_eq!(modules, [] as [(std::string::String, u64, u64); 0]);
     }
 
     #[test]
@@ -354,7 +354,7 @@ mod tests {
             make_region(0x5000, 0x6000, "[vdso]", RegionSafety::ReadOnly),
         ];
         let modules = extract_module_bases(&regions);
-        assert!(modules.is_empty());
+        assert_eq!(modules, [] as [(std::string::String, u64, u64); 0]);
     }
 
     #[test]

@@ -180,7 +180,7 @@ mod tests {
             .await
             .unwrap();
         let sessions = result.as_array().unwrap();
-        assert!(!sessions.is_empty());
+        assert_ne!(sessions.as_slice(), [] as [serde_json::Value; 0]);
 
         server_handle.abort();
     }
