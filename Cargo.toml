@@ -30,7 +30,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 capstone = "0.14"
-nix = { version = "0.31", features = ["process", "uio", "signal", "ptrace", "user"] }
+nix = { version = "0.32", features = ["process", "uio", "signal", "ptrace", "user"] }
 
 [dev-dependencies]
 proptest = "1"
