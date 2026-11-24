@@ -26,12 +26,13 @@ which read and write another process's memory without stopping it at all.
 
 The package installs `pika`. Executables are installed under `/usr/bin`.
 
-Download the `.pkg.tar.zst` from [GitHub Releases](https://github.com/delfianto/pika/releases/latest)
-and install it with `sudo pacman -U ./<package-file>`, or build the package
-from the checksum-verified release archive with `makepkg -si`:
+Download the `pika` package from [GitHub Releases](https://github.com/delfianto/pika/releases/latest)
+and install it with `sudo pacman -U ./<package-file>`. If pacman asks to remove the
+previous package, answer `y`. You can also build the package from the
+checksum-verified release archive with `makepkg -si`:
 
 ```sh
-git clone --branch v0.2.2 https://github.com/delfianto/pika.git
+git clone --branch arch-v0.2.2-2 https://github.com/delfianto/pika.git
 cd pika/arch
 makepkg -si
 ```
