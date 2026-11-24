@@ -1,18 +1,17 @@
 pkgname=pika-bin
-pkgver=0.2.0
+pkgver=0.2.1
 pkgrel=1
 pkgdesc='Non-stopping memory scanner for Wine and Proton games'
 arch=('x86_64')
 url='https://github.com/delfianto/pika'
-# The bundled LICENSE is MIT and Cargo.toml declares GPL-3.0-only.
-license=('LicenseRef-Pika')
+license=('MIT')
 depends=('glibc' 'libgcc')
 provides=("pika=$pkgver")
 conflicts=('pika')
 options=('!strip' '!debug')
 _archive="pika-v$pkgver-linux-x86_64"
 source=("$url/releases/download/v$pkgver/$_archive.tar.gz")
-sha256sums=('8dd726aaf8ba1d4baaf9bd3c3938f8121e95ce904f855ed26c9fe3674932c63e')
+sha256sums=('bb6965d9c25fa7bd6d05b877d0d7274eb6e92ed4227aed20c90f3fb7d036e760')
 
 package() {
     cd "$srcdir/$_archive"
