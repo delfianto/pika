@@ -1,16 +1,17 @@
-pkgname=pika-bin
+pkgname=pika
 pkgver=0.2.2
-pkgrel=1
+pkgrel=2
 pkgdesc='Non-stopping memory scanner for Wine and Proton games'
 arch=('x86_64')
 url='https://github.com/delfianto/pika'
 license=('MIT')
 depends=('glibc' 'libgcc')
-provides=("pika=$pkgver")
-conflicts=('pika')
+provides=("pika-bin=$pkgver-$pkgrel")
+conflicts=('pika-bin')
+replaces=('pika-bin')
 options=('!strip' '!debug')
 _archive="pika-v$pkgver-linux-x86_64"
-source=("$url/releases/download/v$pkgver/$_archive.tar.gz")
+source=("$url/releases/download/arch-v$pkgver-$pkgrel/$_archive.tar.gz")
 sha256sums=('0266397509aa822b573db669d98a6c0a622b83dcabd814b3b5853e78e0149d06')
 
 package() {

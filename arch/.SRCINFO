@@ -1,17 +1,18 @@
-pkgbase = pika-bin
+pkgbase = pika
 	pkgdesc = Non-stopping memory scanner for Wine and Proton games
 	pkgver = 0.2.2
-	pkgrel = 1
+	pkgrel = 2
 	url = https://github.com/delfianto/pika
 	arch = x86_64
 	license = MIT
 	depends = glibc
 	depends = libgcc
-	provides = pika=0.2.2
-	conflicts = pika
+	provides = pika-bin=0.2.2-2
+	conflicts = pika-bin
+	replaces = pika-bin
 	options = !strip
 	options = !debug
-	source = https://github.com/delfianto/pika/releases/download/v0.2.2/pika-v0.2.2-linux-x86_64.tar.gz
+	source = https://github.com/delfianto/pika/releases/download/arch-v0.2.2-2/pika-v0.2.2-linux-x86_64.tar.gz
 	sha256sums = 0266397509aa822b573db669d98a6c0a622b83dcabd814b3b5853e78e0149d06
 
-pkgname = pika-bin
+pkgname = pika
