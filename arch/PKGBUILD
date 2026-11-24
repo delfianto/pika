@@ -1,5 +1,5 @@
 pkgname=pika-bin
-pkgver=0.2.1
+pkgver=0.2.2
 pkgrel=1
 pkgdesc='Non-stopping memory scanner for Wine and Proton games'
 arch=('x86_64')
@@ -11,10 +11,10 @@ conflicts=('pika')
 options=('!strip' '!debug')
 _archive="pika-v$pkgver-linux-x86_64"
 source=("$url/releases/download/v$pkgver/$_archive.tar.gz")
-sha256sums=('bb6965d9c25fa7bd6d05b877d0d7274eb6e92ed4227aed20c90f3fb7d036e760')
+sha256sums=('0266397509aa822b573db669d98a6c0a622b83dcabd814b3b5853e78e0149d06')
 
 package() {
     cd "$srcdir/$_archive"
-    install -Dm0755 pika "$pkgdir/usr/local/bin/pika"
+    install -Dm0755 pika "$pkgdir/usr/bin/pika"
     install -Dm0644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 }
