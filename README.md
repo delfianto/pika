@@ -22,8 +22,26 @@ which read and write another process's memory without stopping it at all.
 
 ## Install
 
+### Arch Linux (x86_64)
+
+The package installs `pika`. Executables are installed under `/usr/local/bin`.
+
+Download the `.pkg.tar.zst` from [GitHub Releases](https://github.com/delfianto/pika/releases/latest)
+and install it with `sudo pacman -U ./<package-file>`, or build the package
+from the checksum-verified release archive with `makepkg -si`:
+
+```sh
+git clone --branch v0.2.0 https://github.com/delfianto/pika.git
+cd pika/arch
+makepkg -si
+```
+
+### Build from source
+
+Source builds require Rust 1.100.0 or later.
+
 ```bash
-# Requires Rust 1.85+ (edition 2024)
+# Requires Rust 1.100.0+ (edition 2024)
 git clone https://github.com/delfianto/pika.git
 cd pika
 

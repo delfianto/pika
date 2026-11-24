@@ -24,3 +24,10 @@ target
 # Added by cargo
 
 /target
+
+# Local makepkg outputs
+/arch/pkg/
+/arch/src/
+/arch/*.pkg.tar.*
+/arch/*.tar.gz
+/arch/*.log

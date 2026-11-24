@@ -1,10 +1,10 @@
 [package]
 name = "pika"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 description = "Non-stopping memory scanner for Wine/Proton games"
 license = "GPL-3.0-only"
-rust-version = "1.98.0"
+rust-version = "1.100.0"
 
 [[bin]]
 name = "pika"
