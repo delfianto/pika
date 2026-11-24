@@ -31,7 +31,7 @@ and install it with `sudo pacman -U ./<package-file>`, or build the package
 from the checksum-verified release archive with `makepkg -si`:
 
 ```sh
-git clone --branch v0.2.0 https://github.com/delfianto/pika.git
+git clone --branch v0.2.1 https://github.com/delfianto/pika.git
 cd pika/arch
 makepkg -si
 ```
@@ -196,3 +196,6 @@ CLI commands ──> Unix socket ──> pika serve (daemon)
                                         (no SIGSTOP, no ptrace)
 ```
 
+## License
+
+[MIT](LICENSE).
